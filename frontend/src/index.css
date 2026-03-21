@@ -1,0 +1,136 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  /* Scrollbar personalizada */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
+}
+
+@layer components {
+  /* ── Bento Card: skill spec → radius 24px, shadow 0 4px 6px, hover scale 1.02 ── */
+  .bento-card {
+    @apply bg-white transition-all duration-300 ease-out border border-gray-100;
+    border-radius: 24px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+  }
+  .bento-card:hover {
+    box-shadow: 0 12px 28px rgba(0,0,0,0.08), 0 4px 10px rgba(0,0,0,0.04);
+    transform: scale(1.02);
+  }
+
+  .bento-card-static {
+    @apply bg-white border border-gray-100;
+    border-radius: 24px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+  }
+
+  /* ── Status Badge: skill Real-Time Monitoring indicators ── */
+  .status-badge {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold;
+  }
+
+  /* ── Section Label: skill typography → 500 weight, uppercase, +1.2 tracking ── */
+  .section-label {
+    @apply text-[11px] font-medium uppercase text-gray-400;
+    letter-spacing: 0.075em;
+  }
+
+  /* ── Page Heading: skill typography → 600 weight, -0.5 tracking ── */
+  .page-heading {
+    @apply text-xl font-semibold text-gray-900;
+    letter-spacing: -0.025em;
+  }
+
+  /* ── Card Heading: skill Data-Dense → 12-14px font ── */
+  .card-heading {
+    @apply font-semibold text-gray-800;
+    font-size: 13px;
+    letter-spacing: -0.025em;
+  }
+
+  /* ── Data Table: compact rows, subtle separators ── */
+  .data-table {
+    @apply w-full;
+    font-size: 12px;
+  }
+  .data-table thead {
+    @apply sticky top-0 bg-white z-10;
+  }
+  .data-table th {
+    @apply py-1.5 pr-3 text-gray-400 font-medium uppercase text-[10px] text-center;
+    letter-spacing: 0.075em;
+  }
+  .data-table td {
+    @apply pr-3 text-gray-600;
+    height: 58px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  .data-table tbody tr {
+    @apply border-b border-gray-50 transition-colors;
+  }
+  .data-table tbody tr:hover {
+    background-color: #F9FAFB;
+  }
+
+  /* ── KPI Card: skill Data-Dense → compact 12px padding, animate count-up ── */
+  .kpi-card {
+    @apply bg-white border border-gray-100 py-3 flex items-center gap-3;
+    border-radius: 24px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    padding-left: 12px;
+    padding-right: 12px;
+    animation: slide-in 0.3s ease-out both;
+  }
+  .kpi-icon {
+    @apply w-10 h-10 rounded-2xl flex items-center justify-center text-lg;
+  }
+  .kpi-value {
+    @apply text-xl font-bold text-gray-900;
+    letter-spacing: -0.025em;
+    animation: count-up 0.6s ease-out both;
+  }
+  .kpi-label {
+    @apply text-[11px] text-gray-400 font-medium;
+  }
+
+  /* ── Pill Toggle: reusable camera/filter toggle based on skill patterns ── */
+  .pill-toggle {
+    @apply text-[11px] font-semibold px-3 py-1.5 rounded-xl transition-all duration-200;
+  }
+  .pill-toggle-active {
+    @apply bg-brand-red text-white shadow-sm;
+  }
+  .pill-toggle-inactive {
+    @apply bg-white border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-700;
+  }
+
+  /* ── Alert Bar: skill Real-Time Monitoring → critical alerts prominent ── */
+  .alert-bar {
+    @apply bg-white border border-gray-100 px-5 py-3 flex items-center gap-3;
+    border-radius: 24px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    border-left: 4px solid #DC2626;
+  }
+
+  /* ── Live Badge: skill Real-Time Monitoring → pulsing status indicator ── */
+  .live-badge {
+    @apply inline-flex items-center gap-1.5 bg-brand-red/90 text-white text-[9px] font-bold px-2 py-0.5 rounded-lg;
+  }
+
+  /* ── Connection indicator: skill Real-Time Monitoring → connection status shown ── */
+  .connection-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+  .connection-dot-online { @apply bg-status-green animate-pulse-live; }
+  .connection-dot-offline { @apply bg-status-red; }
+  .connection-dot-reconnecting { @apply bg-status-yellow animate-pulse-live; }
+}
