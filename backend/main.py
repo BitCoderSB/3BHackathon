@@ -3,11 +3,15 @@ Fase 3.2 — API REST FastAPI
 Expone el InventoryEngine vía endpoints HTTP.
 """
 
+import asyncio
+import logging
+import random
 import time
 import uuid
 from dataclasses import asdict
 from datetime import datetime
 
+import socketio
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -24,6 +28,88 @@ from inventory_engine import InventoryEngine
 app = FastAPI(title="P3 BackendCore", version="0.1.0")
 engine = InventoryEngine()
 START_TIME = time.time()
+
+# ─────────────────────────────────────────
+#  WebSocket — python-socketio
+# ─────────────────────────────────────────
+
+sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
+ws_logger = logging.getLogger("websocket")
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+@app.on_event("startup")
+async def _startup():
+    global _loop
+    _loop = asyncio.get_running_loop()
+    ws_logger.info("WebSocket server iniciado")
+
+
+def _to_json(obj):
+    """Convierte dataclass a dict JSON-safe (datetime -> ISO)."""
+    d = asdict(obj) if hasattr(obj, '__dataclass_fields__') else obj
+    def _fix(v):
+        if isinstance(v, datetime):
+            return v.isoformat()
+        if isinstance(v, dict):
+            return {k: _fix(val) for k, val in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [_fix(i) for i in v]
+        return v
+    return _fix(d)
+
+
+@sio.event
+async def connect(sid, environ):
+    ws_logger.info(f"Cliente conectado: {sid}")
+
+
+@sio.event
+async def disconnect(sid):
+    ws_logger.info(f"Cliente desconectado: {sid}")
+
+
+async def broadcast_event(event_type: str, data: dict):
+    """Emite un evento a todos los clientes WebSocket."""
+    await sio.emit(event_type, data)
+
+
+def _on_inventory_event(event, stock):
+    """Callback sincrono: programa el broadcast en el event loop."""
+    event_data = _to_json(event)
+    stock_data = _to_json(stock)
+    payload = {"event": event_data, "stock": stock_data}
+
+    async def _emit():
+        await broadcast_event("inventory_update", payload)
+        await broadcast_event("detection_event", event_data)
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_emit())
+    except RuntimeError:
+        if _loop:
+            asyncio.run_coroutine_threadsafe(_emit(), _loop)
+
+
+def _on_inventory_alert(event, stock):
+    """Callback sincrono: programa el broadcast de alerta en el event loop."""
+    payload = {"event": _to_json(event), "stock": _to_json(stock)}
+
+    async def _emit():
+        await broadcast_event("alert", payload)
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_emit())
+    except RuntimeError:
+        if _loop:
+            asyncio.run_coroutine_threadsafe(_emit(), _loop)
+
+
+engine.on_event(_on_inventory_event)
+engine.on_alert(_on_inventory_alert)
+
 
 # ─────────────────────────────────────────
 #  CORS (desarrollo — allow all)
@@ -116,6 +202,31 @@ def get_narratives():
 def reset_inventory():
     engine.reset()
     return {"status": "ok", "message": "Inventario reseteado a stock inicial"}
+
+
+@app.post("/api/mock/event")
+async def mock_event():
+    """Simula un retiro aleatorio para probar WebSocket sin CV."""
+    sku_ids = list(engine._stock.keys())
+    sku_id = random.choice(sku_ids)
+    product = engine._stock[sku_id]
+
+    detection = DetectionEvent(
+        event_id=str(uuid.uuid4()),
+        event_type=EventType.RETIRO,
+        sku_id=sku_id,
+        sku_name=product.sku_name,
+        slot_id=product.slot_id,
+        confidence=0.95,
+        timestamp=datetime.now(),
+        bbox=(0, 0, 0, 0),
+        count_before=product.stock_current,
+        count_after=max(0, product.stock_current - 1),
+    )
+    inv_event = engine.process_event(detection)
+    if inv_event is None:
+        return {"status": "ignored", "message": "Evento ignorado (stock en 0 o duplicado)"}
+    return {"status": "ok", "event": asdict(inv_event)}
 
 
 @app.get("/api/analytics")
@@ -277,8 +388,14 @@ def dashboard():
 
 
 # ─────────────────────────────────────────
+#  ASGI combinada: FastAPI + socketio
+# ─────────────────────────────────────────
+
+combined_app = socketio.ASGIApp(sio, app)
+
+# ─────────────────────────────────────────
 #  Entrypoint
 # ─────────────────────────────────────────
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:combined_app", host="0.0.0.0", port=8000, reload=True)
