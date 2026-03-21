@@ -76,8 +76,8 @@ PRODUCTOS = [
 ]
 
 STOCK_INITIAL       = 8
-CONFIDENCE_THRESHOLD = 0.70
-MIN_THRESHOLD        = 0.25     # alerta cuando stock <= 25% del inicial
+CONFIDENCE_THRESHOLD = 0.15     # umbral bajo: DetectionEngine ya valida consistencia (3 frames)
+MIN_THRESHOLD        = 0.20     # alerta cuando stock <= 25% del inicial
 MAX_EVENTS           = 1000    # máximo de eventos en memoria
 MAX_TIMESTAMPS_PER_SKU = 500   # máximo de timestamps por SKU
 

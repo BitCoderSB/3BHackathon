@@ -76,9 +76,9 @@ class VideoOverlay:
     # ------------------------------------------------------------------ #
     #  encode_frame
     # ------------------------------------------------------------------ #
-    def encode_frame(self, frame: np.ndarray) -> str:
-        """Codifica el frame a JPEG base64."""
-        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+    def encode_frame(self, frame: np.ndarray, quality: int = 55) -> str:
+        """Codifica el frame a JPEG base64 (calidad reducida para streaming)."""
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
         if not ok:
             raise RuntimeError("Error al codificar frame a JPEG")
         return base64.b64encode(buf.tobytes()).decode("ascii")

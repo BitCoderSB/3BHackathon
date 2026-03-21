@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { MOCK_PRODUCTS_CAM1, MOCK_PRODUCTS_CAM2, MOCK_STORE } from "../mocks/mockData";
+import { useSocketContext } from "../hooks/useSocket";
 import type { ProductStock } from "../types";
 
 /* ── Semi-circle tick gauge — configurable params ── */
@@ -73,12 +73,15 @@ function productImage(sku: string) {
 }
 
 export default function ProductCatalog() {
+  const { products, cameras } = useSocketContext();
   const [search, setSearch] = useState("");
   const [camFilter, setCamFilter] = useState<string | "all">("all");
   const [sortBy, setSortBy] = useState<"name" | "stock" | "alert">("name");
 
   const filtered = useMemo(() => {
-    let list: ProductStock[] = camFilter === "all" ? MOCK_PRODUCTS_CAM1 : camFilter === "cam-1" ? MOCK_PRODUCTS_CAM1 : MOCK_PRODUCTS_CAM2;
+    let list: ProductStock[] = camFilter === "all"
+      ? products
+      : products.filter(p => p.source_id === camFilter);
     if (search) {
       const q = search.toLowerCase();
       list = list.filter(p => p.sku_name.toLowerCase().includes(q) || p.sku_id.toLowerCase().includes(q));
@@ -88,7 +91,7 @@ export default function ProductCatalog() {
       if (sortBy === "alert") return (b.alert_active ? 1 : 0) - (a.alert_active ? 1 : 0);
       return a.sku_name.localeCompare(b.sku_name);
     });
-  }, [search, camFilter, sortBy]);
+  }, [search, camFilter, sortBy, products]);
 
   const totalActive = filtered.length;
   const mostSold = [...filtered].sort((a, b) =>
@@ -116,13 +119,13 @@ export default function ProductCatalog() {
             />
             <div className="h-5 w-px bg-gray-200" />
             <div className="flex gap-1">
-              {["all", ...MOCK_STORE.cameras.map(c => c.source_id)].map(id => (
+              {["all", ...cameras.map(c => c.source_id)].map(id => (
                 <button
                   key={id}
                   onClick={() => setCamFilter(id)}
                   className={`pill-toggle ${camFilter === id ? "pill-toggle-active" : "pill-toggle-inactive"}`}
                 >
-                  {id === "all" ? "Todas" : MOCK_STORE.cameras.find(c => c.source_id === id)?.label}
+                  {id === "all" ? "Todas" : cameras.find(c => c.source_id === id)?.label}
                 </button>
               ))}
             </div>

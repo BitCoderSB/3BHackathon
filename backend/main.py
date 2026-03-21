@@ -9,6 +9,7 @@ import logging
 import random
 import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime
 
@@ -27,6 +28,9 @@ from inventory_engine import InventoryEngine
 from prediction_engine import PredictionEngine
 from heatmap_engine import HeatmapEngine
 from narrative_engine import NarrativeEngine
+from camera_capture import CameraCapture
+from detection_engine import DetectionEngine
+from video_overlay import VideoOverlay
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +38,78 @@ logger = logging.getLogger(__name__)
 #  Instancia global
 # ─────────────────────────────────────────
 
+# Lifespan se asigna después de definir _run_camera_loop
 app = FastAPI(title="Anaquel Inteligente 3B", version="0.2.0")
 engine = InventoryEngine()
 prediction_engine = PredictionEngine(alpha=0.3)
 heatmap_engine = HeatmapEngine()
 narrative_engine = NarrativeEngine(cooldown_seconds=30.0)
 START_TIME = time.time()
+
+# ─────────────────────────────────────────
+#  Camera pipeline (M1 + M2 + M5)
+# ─────────────────────────────────────────
+
+_camera: CameraCapture | None = None
+_det_engine: DetectionEngine | None = None
+_overlay: VideoOverlay | None = None
+
+
+def _camera_callback(frame_b64, detection_result, events):
+    """Callback invocado por stream_loop en hilo de cámara."""
+    # Enviar frame al frontend
+    if frame_b64:
+        _schedule_broadcast("video_frame", {"frame": frame_b64})
+
+    # Procesar eventos de detección (retiros/devoluciones)
+    for ev in events:
+        engine.process_event(ev)
+
+    return False  # No detener el loop
+
+
+def _run_camera_loop():
+    """Loop bloqueante de cámara — se ejecuta en thread separado.
+    Se auto-reinicia si la cámara se desconecta (con backoff)."""
+    global _camera, _det_engine, _overlay
+    max_retries = 0  # Infinitos reintentos
+    retry_count = 0
+    base_delay = 3  # segundos
+
+    while True:
+        try:
+            if _det_engine is None:
+                logger.info("[Cámara] Cargando DetectionEngine...")
+                _det_engine = DetectionEngine(save_frames=False)
+            if _overlay is None:
+                _overlay = VideoOverlay()
+
+            _camera = CameraCapture()
+            if not _camera.start():
+                retry_count += 1
+                delay = min(base_delay * retry_count, 30)
+                logger.warning(f"[Cámara] No se pudo iniciar — reintentando en {delay}s")
+                time.sleep(delay)
+                continue
+
+            retry_count = 0  # Reset al conectar exitosamente
+            logger.info("[Cámara] Streaming activo")
+            _camera.stream_loop(
+                _det_engine, _overlay, _camera_callback,
+                max_fps=5, stream_width=640, detect_every=2,
+            )
+        except Exception as e:
+            logger.exception(f"[Cámara] Error en loop: {e}")
+        finally:
+            if _camera:
+                _camera.stop()
+                _camera = None
+
+        # Auto-reinicio con backoff
+        retry_count += 1
+        delay = min(base_delay * retry_count, 30)
+        logger.info(f"[Cámara] Loop terminado — reiniciando en {delay}s")
+        time.sleep(delay)
 
 
 # ─────────────────────────────────────────
@@ -146,11 +216,19 @@ ws_logger = logging.getLogger("websocket")
 _loop: asyncio.AbstractEventLoop | None = None
 
 
-@app.on_event("startup")
-async def _startup():
+# ── Lifespan (reemplaza on_event deprecated) ──
+@asynccontextmanager
+async def _lifespan(application: FastAPI):
     global _loop
     _loop = asyncio.get_running_loop()
     ws_logger.info("WebSocket server iniciado")
+    _loop.run_in_executor(None, _run_camera_loop)
+    yield
+    if _camera:
+        _camera.stop()
+        ws_logger.info("Cámara detenida")
+
+app.router.lifespan_context = _lifespan
 
 
 def _to_json(obj):

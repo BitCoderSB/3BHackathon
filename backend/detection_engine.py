@@ -21,7 +21,7 @@ from contracts import (
 
 # --- Rutas ---
 ROOT = Path(__file__).resolve().parent.parent
-MODEL_PATH = ROOT / "models" / "best2.pt"
+MODEL_PATH = ROOT / "models" / "best3.pt"
 
 # --- Mapa de clases (debe coincidir con classes.txt y productosdelanaquel.md) ---
 CLASS_NAMES = {
@@ -48,60 +48,6 @@ PRODUCT_META = {
 STOCK_INITIAL = 8  # Unidades iniciales por SKU
 
 
-# --- Contratos (C2, C3) ---
-class EventType(Enum):
-    RETIRO = "retiro"
-    DEVOLUCION = "devolucion"
-
-
-@dataclass
-class DetectionEvent:
-    event_id: str
-    event_type: EventType
-    sku_id: str
-    sku_name: str
-    slot_id: int
-    confidence: float
-    timestamp: datetime
-    bbox: tuple[int, int, int, int]
-    count_before: int
-    count_after: int
-
-
-@dataclass
-class SlotDetection:
-    sku_id: str
-    sku_name: str
-    slot_id: int
-    bbox: tuple[int, int, int, int]
-    confidence: float
-    count: int
-    stock_level: str  # "ok" | "warning" | "critical"
-
-
-@dataclass
-class DetectionResult:
-    timestamp: float
-    counts: dict[str, int]  # sku_id -> cantidad detectada
-    detections: list[SlotDetection] = field(default_factory=list)
-
-
-@dataclass
-class AnnotatedFrame:
-    frame: np.ndarray
-    timestamp: float
-    detections: list[SlotDetection]
-
-
-@dataclass
-class InteractionEvent:
-    slot_id: int
-    sku_id: str
-    region: tuple[int, int, int, int]
-    timestamp: datetime
-    interaction_type: str  # "hand_detected" | "product_moved"
-
-
 # --- Carpeta de frames de debug ---
 DEBUG_FRAMES_DIR = ROOT / "backend" / "debug_frames"
 
@@ -115,10 +61,11 @@ _STOCK_COLORS = {
 
 # --- Motor de detección ---
 class DetectionEngine:
-    def __init__(self, model_path: str | Path = MODEL_PATH, conf: float = 0.5,
-                 save_frames: bool = True):
+    def __init__(self, model_path: str | Path = MODEL_PATH, conf: float = 0.1,
+                 save_frames: bool = False, imgsz: int = 640):
         self.model = YOLO(str(model_path))
         self.conf = conf
+        self.imgsz = imgsz
         self.save_frames = save_frames
         self._frame_counter = 0
         # Preparar carpeta de debug frames
@@ -133,14 +80,14 @@ class DetectionEngine:
         # Warm-up: 3 inferences dummy
         dummy = np.zeros((640, 640, 3), dtype=np.uint8)
         for _ in range(3):
-            self.model.predict(dummy, conf=self.conf, verbose=False)
-        print("DetectionEngine inicializado y warm-up completado.")
+            self.model.predict(dummy, conf=self.conf, imgsz=self.imgsz, verbose=False)
+        print(f"DetectionEngine inicializado (conf={self.conf}, imgsz={self.imgsz}).")
 
     def detect(self, frame: np.ndarray) -> DetectionResult:
         """Ejecuta inferencia sobre un frame y retorna conteos por clase."""
         import time
 
-        results = self.model.predict(frame, conf=self.conf, verbose=False)
+        results = self.model.predict(frame, conf=self.conf, imgsz=self.imgsz, verbose=False)
         counts: dict[str, int] = {info[0]: 0 for info in CLASS_NAMES.values()}
         raw_detections: list[tuple[str, str, int, tuple, float]] = []
 
@@ -259,14 +206,17 @@ class DetectionEngine:
             else:
                 event_type = EventType.DEVOLUCION
 
-            # Buscar bbox representativo de este sku en detecciones actuales
+            # Promediar confianza de TODAS las detecciones de este SKU
             bbox = (0, 0, 0, 0)
-            avg_conf = 0.0
+            conf_sum = 0.0
+            conf_count = 0
             for det in curr.detections:
                 if det.sku_id == sku_id:
-                    bbox = det.bbox
-                    avg_conf = det.confidence
-                    break
+                    if conf_count == 0:
+                        bbox = det.bbox  # Tomar primer bbox como representativo
+                    conf_sum += det.confidence
+                    conf_count += 1
+            avg_conf = conf_sum / conf_count if conf_count > 0 else 0.0
 
             sku_name = self._get_name_for_sku(sku_id)
 
@@ -305,26 +255,25 @@ class DetectionEngine:
         return sku_id
 
 
-# --- Test en vivo con cámara ---
+# --- Monitoreo en tiempo real ---
 if __name__ == "__main__":
     import argparse
+    import time as _time
     from camera_capture import CameraCapture
 
-    parser = argparse.ArgumentParser(description="Test de detección en vivo")
-    parser.add_argument("--conf", type=float, default=0.5,
+    parser = argparse.ArgumentParser(description="Monitoreo en tiempo real del anaquel")
+    parser.add_argument("--conf", type=float, default=0.1,
                         help="Umbral de confianza (0.0-1.0)")
-    parser.add_argument("--frames", type=int, default=5,
-                        help="Cantidad de frames a capturar")
     parser.add_argument("--source", default=None,
                         help="Fuente de video (RTSP URL o int para USB)")
     args = parser.parse_args()
 
     print("=" * 60)
-    print("  DetectionEngine — Test en vivo con cámara")
-    print(f"  conf={args.conf}  frames={args.frames}")
+    print("  DetectionEngine — Monitoreo en tiempo real")
+    print(f"  conf={args.conf}  |  Ctrl+C para detener")
     print("=" * 60)
 
-    engine = DetectionEngine(conf=args.conf)
+    engine = DetectionEngine(conf=args.conf, save_frames=False)
 
     source = args.source
     if source is not None:
@@ -338,35 +287,36 @@ if __name__ == "__main__":
         exit(1)
 
     prev_result = None
-    captured = 0
+    event_count = 0
+
+    print("\nEscuchando eventos en tiempo real...\n")
 
     try:
-        for fd in cam.get_frames():
-            captured += 1
-            result = engine.detect(fd.frame)
+        while True:
+            for fd in cam.get_frames():
+                result = engine.detect(fd.frame)
 
-            total = sum(result.counts.values())
-            print(f"\n--- Frame {captured} ({fd.resolution[0]}x{fd.resolution[1]}) ---")
-            print(f"Total detecciones: {total}")
-            for sku_id, count in sorted(result.counts.items()):
-                if count > 0:
-                    print(f"  {sku_id}: {count}")
-
-            if prev_result is not None:
-                events = engine.compare(prev_result, result)
-                if events:
+                if prev_result is not None:
+                    events = engine.compare(prev_result, result)
                     for ev in events:
-                        print(f"  ⚡ {ev.event_type.value}: {ev.sku_name} "
-                              f"({ev.count_before}→{ev.count_after})")
+                        event_count += 1
+                        ts = ev.timestamp.strftime('%H:%M:%S')
+                        print(f"  ⚡ [{ts}] {ev.event_type.value.upper()}: "
+                              f"{ev.sku_name} ({ev.count_before}→{ev.count_after}) "
+                              f"conf={ev.confidence:.2f}")
 
-            prev_result = result
+                prev_result = result
 
-            if captured >= args.frames:
+            # Si get_frames termina (desconexión), reconectar
+            print("[!] Cámara desconectada, reconectando...")
+            cam.stop()
+            _time.sleep(2)
+            if not cam.start():
+                print("ERROR: No se pudo reconectar")
                 break
+
+    except KeyboardInterrupt:
+        print("\n\nDetenido por el usuario.")
     finally:
         cam.stop()
-
-    print(f"\n{'=' * 60}")
-    print(f"  {captured} frames capturados y guardados en debug_frames/")
-    print(f"{'=' * 60}")
-    print("\n✅ DetectionEngine funcional.")
+        print(f"Total eventos detectados: {event_count}")

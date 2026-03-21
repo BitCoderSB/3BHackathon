@@ -1,25 +1,26 @@
 import { useState, useMemo } from "react";
-import { MOCK_NARRATIVES, MOCK_EVENTS, MOCK_STORE } from "../mocks/mockData";
+import { useSocketContext } from "../hooks/useSocket";
 import type { NarrativeMessage } from "../types";
 
 type SeverityFilter = "all" | "info" | "warning" | "critical";
 
 export default function Activity() {
+  const { narratives, events, cameras } = useSocketContext();
   const [severity, setSeverity] = useState<SeverityFilter>("all");
   const [camFilter, setCamFilter] = useState<string | "all">("all");
 
   const filteredNarratives = useMemo(() => {
-    let list = [...MOCK_NARRATIVES];
+    let list = [...narratives];
     if (severity !== "all") list = list.filter(n => n.severity === severity);
     if (camFilter !== "all") list = list.filter(n => n.source_id === camFilter);
     return list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-  }, [severity, camFilter]);
+  }, [severity, camFilter, narratives]);
 
   const filteredEvents = useMemo(() => {
-    let list = [...MOCK_EVENTS];
+    let list = [...events];
     if (camFilter !== "all") list = list.filter(e => e.source_id === camFilter);
     return list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-  }, [camFilter]);
+  }, [camFilter, events]);
 
   const totalEvents = filteredEvents.length;
   const removedCount = filteredEvents.filter(e => e.action === "removed").length;
@@ -35,13 +36,13 @@ export default function Activity() {
           <p className="text-dense-xs text-gray-400 mt-0.5">Narrativa inteligente y eventos del sistema</p>
         </div>
         <div className="flex gap-1">
-          {["all", ...MOCK_STORE.cameras.map(c => c.source_id)].map(id => (
+          {["all", ...cameras.map(c => c.source_id)].map(id => (
             <button
               key={id}
               onClick={() => setCamFilter(id)}
               className={`pill-toggle ${camFilter === id ? "pill-toggle-active" : "pill-toggle-inactive"}`}
             >
-              {id === "all" ? "Todas" : MOCK_STORE.cameras.find(c => c.source_id === id)?.label}
+              {id === "all" ? "Todas" : cameras.find(c => c.source_id === id)?.label}
             </button>
           ))}
         </div>
