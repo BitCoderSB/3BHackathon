@@ -1,0 +1,37 @@
+{
+  "categories": [
+    {
+      "id": 0,
+      "name": "agua_burst"
+    },
+    {
+      "id": 1,
+      "name": "burst_energetica_roja"
+    },
+    {
+      "id": 2,
+      "name": "burst_energy"
+    },
+    {
+      "id": 3,
+      "name": "nachos_naturasol"
+    },
+    {
+      "id": 4,
+      "name": "nebraska_mango"
+    },
+    {
+      "id": 5,
+      "name": "sisi_cola"
+    },
+    {
+      "id": 6,
+      "name": "sun_paradise_naranja"
+    }
+  ],
+  "info": {
+    "year": 2026,
+    "version": "1.0",
+    "contributor": "Label Studio"
+  }
+}
