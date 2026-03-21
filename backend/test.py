@@ -1,12 +1,12 @@
 from ultralytics import YOLO
 
 # 1. Cargar el modelo que acabas de entrenar
-model_path = '/Users/josezacarias/Hackaton3B-Reto1/models/best2.pt'
+model_path = '/Users/josezacarias/Hackaton3B-Reto1/models/best3.pt'
 model = YOLO(model_path)
 
 # 2. Ruta a una foto NUEVA de un anaquel (que no esté en tus 70 originales)
 # Cambia esta ruta por la de tu foto de prueba
-image_to_test = '/Users/josezacarias/Documents/test5.png'
+image_to_test = '/Users/josezacarias/Documents/test3.png'
 
 # 3. Correr la predicción
 # show=True abrirá una ventana para mostrarte el resultado.

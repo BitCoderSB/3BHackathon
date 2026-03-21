@@ -30,3 +30,6 @@ Thumbs.db
 # Env
 .env
 *.log
+runs
+runs/anaquel_3b_v25/weights/
+.gitignore
