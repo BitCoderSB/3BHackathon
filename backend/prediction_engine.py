@@ -2,31 +2,9 @@
 Calcula cuándo se agotará cada producto usando suavizado exponencial.
 """
 
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-
-@dataclass
-class SKUHistory:
-    """Input desde M3 (Inventario) — historial de retiros de un SKU."""
-    sku_id: str
-    sku_name: str
-    stock_current: int
-    stock_initial: int  # 8
-    events: list[datetime]  # Timestamps de cada retiro
-
-
-@dataclass
-class StockPrediction:
-    """Output — predicción de agotamiento para un SKU."""
-    sku_id: str
-    sku_name: str
-    stock_current: int
-    rate_per_hour: float
-    estimated_depletion: datetime | None
-    minutes_remaining: float | None
-    trend: str       # "acelerando" | "estable" | "desacelerando"
-    confidence: str  # "alta" | "media" | "baja"
+from contracts import SKUHistory, StockPrediction
 
 
 class PredictionEngine:

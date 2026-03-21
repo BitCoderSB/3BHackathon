@@ -8,14 +8,17 @@ from __future__ import annotations
 import glob
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
 from pathlib import Path
 
 import cv2
 import numpy as np
 from ultralytics import YOLO
+
+from contracts import (
+    EventType, DetectionEvent, SlotDetection, DetectionResult,
+    AnnotatedFrame, InteractionEvent,
+)
 
 # --- Rutas ---
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,60 +36,6 @@ CLASS_NAMES = {
 }
 
 STOCK_INITIAL = 8  # Unidades iniciales por SKU
-
-
-# --- Contratos (C2, C3) ---
-class EventType(Enum):
-    RETIRO = "retiro"
-    DEVOLUCION = "devolucion"
-
-
-@dataclass
-class DetectionEvent:
-    event_id: str
-    event_type: EventType
-    sku_id: str
-    sku_name: str
-    slot_id: int
-    confidence: float
-    timestamp: datetime
-    bbox: tuple[int, int, int, int]
-    count_before: int
-    count_after: int
-
-
-@dataclass
-class SlotDetection:
-    sku_id: str
-    sku_name: str
-    slot_id: int
-    bbox: tuple[int, int, int, int]
-    confidence: float
-    count: int
-    stock_level: str  # "ok" | "warning" | "critical"
-
-
-@dataclass
-class DetectionResult:
-    timestamp: float
-    counts: dict[str, int]  # sku_id -> cantidad detectada
-    detections: list[SlotDetection] = field(default_factory=list)
-
-
-@dataclass
-class AnnotatedFrame:
-    frame: np.ndarray
-    timestamp: float
-    detections: list[SlotDetection]
-
-
-@dataclass
-class InteractionEvent:
-    slot_id: int
-    sku_id: str
-    region: tuple[int, int, int, int]
-    timestamp: datetime
-    interaction_type: str  # "hand_detected" | "product_moved"
 
 
 # --- Motor de detección ---

@@ -4,21 +4,10 @@ Genera mensajes narrativos en español a partir de eventos de inventario,
 predicciones y alertas. Incluye cooldown para evitar spam.
 """
 
-from dataclasses import dataclass, field
 from datetime import datetime
 import uuid
 
-
-# --- Contrato de salida (C7) ---
-
-@dataclass
-class NarrativeMessage:
-    message_id: str
-    severity: str       # "info" | "warning" | "critical"
-    text: str           # Texto en español, legible para humano
-    sku_id: str | None  # SKU relacionado (o None si es general)
-    timestamp: datetime
-    icon: str           # Emoji
+from contracts import NarrativeMessage
 
 
 # --- Templates ---

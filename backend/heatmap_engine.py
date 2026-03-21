@@ -4,19 +4,9 @@ Registra interacciones por zona (slot) y genera un mapa de calor
 normalizado con ventana temporal configurable.
 """
 
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-
-# --- Contrato de entrada (C4) ---
-
-@dataclass
-class InteractionEvent:
-    slot_id: int
-    sku_id: str
-    region: tuple[int, int, int, int]  # (x1, y1, x2, y2)
-    timestamp: datetime
-    interaction_type: str  # "hand_detected" | "product_moved"
+from contracts import InteractionEvent
 
 
 class HeatmapEngine:
