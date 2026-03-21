@@ -1,6 +1,7 @@
 """
-Fase 3.2 — API REST FastAPI
-Expone el InventoryEngine vía endpoints HTTP.
+Fase 3.2 + 3.3 — API REST + WebSocket + Integración motores de inteligencia
+Expone el InventoryEngine vía endpoints HTTP y WebSocket (python-socketio).
+Integra PredictionEngine, NarrativeEngine y HeatmapEngine.
 """
 
 import asyncio
@@ -18,8 +19,11 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
-from contracts import DetectionEvent, EventType
+from contracts import DetectionEvent, EventType, InteractionEvent
 from inventory_engine import InventoryEngine
+from prediction_engine import PredictionEngine
+from narrative_engine import NarrativeEngine
+from heatmap_engine import HeatmapEngine
 
 # ─────────────────────────────────────────
 #  Instancia global
@@ -27,6 +31,9 @@ from inventory_engine import InventoryEngine
 
 app = FastAPI(title="P3 BackendCore", version="0.1.0")
 engine = InventoryEngine()
+prediction_eng = PredictionEngine()
+narrative_eng = NarrativeEngine(cooldown_seconds=10.0)
+heatmap_eng = HeatmapEngine()
 START_TIME = time.time()
 
 # ─────────────────────────────────────────
@@ -75,14 +82,54 @@ async def broadcast_event(event_type: str, data: dict):
 
 
 def _on_inventory_event(event, stock):
-    """Callback sincrono: programa el broadcast en el event loop."""
+    """Callback sincrono: alimenta los 3 motores de inteligencia y broadcast."""
     event_data = _to_json(event)
     stock_data = _to_json(stock)
     payload = {"event": event_data, "stock": stock_data}
 
+    # --- Alimentar motores de inteligencia ---
+    # Heatmap
+    heatmap_eng.record(InteractionEvent(
+        slot_id=event.slot_id, sku_id=event.sku_id,
+        region=(0, 0, 0, 0), timestamp=event.timestamp,
+        interaction_type="product_moved",
+    ))
+
+    # Predicciones (todos los SKUs)
+    all_histories = engine.get_all_histories()
+    all_preds = prediction_eng.predict_all([h for h in all_histories if h])
+    preds_data = [_to_json(p) for p in all_preds]
+
+    # Narrativa de retiro/devolucion
+    narr_msg = narrative_eng.generate(
+        event.event_type, sku_name=event.sku_name, sku_id=event.sku_id,
+        stock=event.stock_after, before=event.stock_before, after=event.stock_after,
+    )
+    narr_data = _to_json(narr_msg) if narr_msg else None
+
+    # Narrativa de predicción si queda poco tiempo
+    pred_narr_data = None
+    history = engine.get_history(event.sku_id)
+    if history:
+        pred = prediction_eng.predict(history)
+        if pred.minutes_remaining is not None and pred.minutes_remaining <= 30:
+            pred_narr = narrative_eng.generate(
+                "prediccion", sku_name=event.sku_name,
+                sku_id=event.sku_id, minutes=round(pred.minutes_remaining),
+            )
+            pred_narr_data = _to_json(pred_narr) if pred_narr else None
+
+    heatmap_data = heatmap_eng.get_heatmap()
+
     async def _emit():
         await broadcast_event("inventory_update", payload)
         await broadcast_event("detection_event", event_data)
+        await broadcast_event("prediction_update", preds_data)
+        if narr_data:
+            await broadcast_event("narrative", narr_data)
+        if pred_narr_data:
+            await broadcast_event("narrative", pred_narr_data)
+        await broadcast_event("heatmap_update", heatmap_data)
 
     try:
         loop = asyncio.get_running_loop()
@@ -93,11 +140,20 @@ def _on_inventory_event(event, stock):
 
 
 def _on_inventory_alert(event, stock):
-    """Callback sincrono: programa el broadcast de alerta en el event loop."""
+    """Callback sincrono: genera narrativa de alerta y broadcast."""
     payload = {"event": _to_json(event), "stock": _to_json(stock)}
+
+    # Narrativa de alerta
+    pct = round(stock.stock_current / stock.stock_initial * 100) if stock.stock_initial else 0
+    alert_narr = narrative_eng.generate(
+        "alerta_umbral", sku_name=event.sku_name, sku_id=event.sku_id, pct=pct,
+    )
+    alert_narr_data = _to_json(alert_narr) if alert_narr else None
 
     async def _emit():
         await broadcast_event("alert", payload)
+        if alert_narr_data:
+            await broadcast_event("narrative", alert_narr_data)
 
     try:
         loop = asyncio.get_running_loop()
@@ -185,31 +241,37 @@ def simulate_event(body: SimulateEventBody):
 
 @app.get("/api/predictions")
 def get_predictions():
-    return []
+    all_histories = engine.get_all_histories()
+    preds = prediction_eng.predict_all([h for h in all_histories if h])
+    return [_to_json(p) for p in preds]
 
 
 @app.get("/api/heatmap")
 def get_heatmap():
-    return {}
+    return heatmap_eng.get_heatmap()
 
 
 @app.get("/api/narratives")
-def get_narratives():
-    return []
+def get_narratives(limit: int = Query(default=10, ge=1, le=200)):
+    msgs = narrative_eng.get_recent(limit=limit)
+    return [_to_json(m) for m in msgs]
 
 
 @app.post("/api/inventory/reset")
 def reset_inventory():
     engine.reset()
+    narrative_eng.clear()
+    heatmap_eng.reset()
     return {"status": "ok", "message": "Inventario reseteado a stock inicial"}
 
 
 @app.post("/api/mock/event")
 async def mock_event():
     """Simula un retiro aleatorio para probar WebSocket sin CV."""
-    sku_ids = list(engine._stock.keys())
+    state = engine.get_state()
+    sku_ids = [p.sku_id for p in state.products]
     sku_id = random.choice(sku_ids)
-    product = engine._stock[sku_id]
+    product = engine.get_product(sku_id)
 
     detection = DetectionEvent(
         event_id=str(uuid.uuid4()),
