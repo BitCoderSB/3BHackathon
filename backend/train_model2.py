@@ -46,7 +46,7 @@ def main():
         close_mosaic=10         # Desactiva mosaic al final para afinar siluetas
     )
 
-    # Copiar mejor modelo a models/best.pt
+    # Copiar mejor modelo a models/best2.pt
     OUTPUT_MODEL.parent.mkdir(parents=True, exist_ok=True)
     best_weights = Path(results.save_dir) / "weights" / "best3.pt"
     if best_weights.exists():

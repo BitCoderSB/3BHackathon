@@ -16,7 +16,7 @@ class FrameData:
 
 
 # URLs RTSP por defecto (de assets/cadenadeconexion.md)
-DEFAULT_RTSP = "rtsp://admin:admin1234@172.31.13.190:554/cam/realmonitor?channel=1&subtype=0"
+DEFAULT_RTSP = "rtsp://admin:admin1234@172.31.13.191:554/cam/realmonitor?channel=1&subtype=0"
 
 MAX_RECONNECT = 5
 RECONNECT_DELAY = 3  # segundos
@@ -126,13 +126,17 @@ class CameraCapture:
         """Loop de streaming con detección, overlay y callback.
 
         Args:
-            detection_engine: objeto con .detect(frame) o None (modo sin CV)
+            detection_engine: objeto con .detect(frame) y .compare() o None (modo sin CV)
             overlay: VideoOverlay con .draw_overlay() y .encode_frame()
-            callback: función(frame_base64, detections) llamada por frame
+            callback: función(frame_base64, detection_result, events) llamada por frame
+                      detection_result: DetectionResult | None
+                      events: list[DetectionEvent] (cambios respecto al frame anterior)
+                      Retorna True para detener el loop.
             max_fps: máximo de frames procesados por segundo (default 5)
         """
         min_interval = 1.0 / max_fps
         last_time = 0.0
+        prev_result = None
 
         for fd in self.get_frames():
             now = time.time()
@@ -140,47 +144,81 @@ class CameraCapture:
                 continue  # skip frame para respetar max_fps
             last_time = now
 
-            detections = []
             detection_result = None
+            slot_detections = []
+            events = []
+
             if detection_engine is not None:
                 detection_result = detection_engine.detect(fd.frame)
-                detections = detection_result.detections
+                slot_detections = detection_result.detections
+
+                # Comparar con frame anterior para generar eventos
+                if prev_result is not None:
+                    events = detection_engine.compare(prev_result, detection_result)
+                prev_result = detection_result
 
             if overlay is not None:
-                drawn = overlay.draw_overlay(fd.frame, detections)
+                drawn = overlay.draw_overlay(fd.frame, slot_detections)
                 frame_b64 = overlay.encode_frame(drawn)
             else:
                 frame_b64 = None
 
             # callback decide qué hacer (enviar al API, imprimir, etc.)
-            should_stop = callback(frame_b64, detection_result if detection_result else detections)
+            should_stop = callback(frame_b64, detection_result, events)
             if should_stop:
                 break
 
 
 # ====================================================================== #
-#  Test manual — Fase 2.3 (stream_loop sin CV, 20 frames, max 5 FPS)
+#  Test manual — Fase INT-1 (Cámara → Detección → Overlay integrados)
 # ====================================================================== #
 if __name__ == "__main__":
+    from detection_engine import DetectionEngine
     from video_overlay import VideoOverlay
 
+    # --- Inicializar componentes ---
+    print("=== INT-1: Cámara → Detección ===\n")
+
+    print("[1/3] Cargando DetectionEngine...")
+    engine = DetectionEngine()
+
+    print("[2/3] Creando VideoOverlay...")
+    overlay = VideoOverlay()
+
+    print("[3/3] Iniciando CameraCapture...")
     cam = CameraCapture()  # RTSP por defecto, fallback a USB
     if not cam.start():
         raise SystemExit(1)
 
-    overlay = VideoOverlay()
-    state = {"count": 0}
+    state = {"count": 0, "events_total": 0}
     t_start = time.time()
 
-    def on_frame(frame_b64, detections):
+    def on_frame(frame_b64, detection_result, events):
         state["count"] += 1
-        size_kb = len(frame_b64) / 1024 if frame_b64 else 0
-        print(f"Frame {state['count']}: {size_kb:.1f} KB base64")
-        return state["count"] >= 20  # detenerse a los 20 frames
+        n = state["count"]
+
+        if detection_result is not None:
+            counts_str = ", ".join(
+                f"{sku}: {c}" for sku, c in sorted(detection_result.counts.items()) if c > 0
+            )
+            if not counts_str:
+                counts_str = "(ningún producto detectado)"
+            size_kb = len(frame_b64) / 1024 if frame_b64 else 0
+            print(f"Frame {n}: {counts_str}  [{size_kb:.1f} KB]")
+        else:
+            print(f"Frame {n}: sin detección")
+
+        if events:
+            for ev in events:
+                state["events_total"] += 1
+                print(f"  ⚡ EVENTO: {ev.event_type.value} — {ev.sku_name} "
+                      f"({ev.count_before}→{ev.count_after})")
+
+        return n >= 30  # detenerse a los 30 frames
 
     try:
         cam.stream_loop(
-            detection_engine=None,
+            detection_engine=engine,
             overlay=overlay,
             callback=on_frame,
             max_fps=5,
@@ -188,5 +226,8 @@ if __name__ == "__main__":
     finally:
         elapsed = time.time() - t_start
         actual_fps = state["count"] / elapsed if elapsed > 0 else 0
-        print(f"\n{state['count']} frames en {elapsed:.1f}s — {actual_fps:.1f} FPS efectivos")
+        print(f"\n{'='*50}")
+        print(f"{state['count']} frames en {elapsed:.1f}s — {actual_fps:.1f} FPS")
+        print(f"Eventos detectados: {state['events_total']}")
+        print(f"{'='*50}")
         cam.stop()

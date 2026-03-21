@@ -12,7 +12,7 @@ from ultralytics import YOLO
 # --- Configuración ---
 ROOT = Path(__file__).resolve().parent.parent
 DATASET_YAML = Path(__file__).resolve().parent / "dataset.yaml"
-OUTPUT_MODEL = ROOT / "models" / "best.pt"
+OUTPUT_MODEL = ROOT / "models" / "best2.pt"
 BASE_MODEL = "yolov8n-seg.pt"
 EPOCHS = 50
 IMGSZ = 640
@@ -43,7 +43,7 @@ def main():
         project=str(ROOT / "runs"),
     )
 
-    # Copiar mejor modelo a models/best.pt
+    # Copiar mejor modelo a models/best2.pt
     OUTPUT_MODEL.parent.mkdir(parents=True, exist_ok=True)
     best_weights = Path(results.save_dir) / "weights" / "best.pt"
     if best_weights.exists():
