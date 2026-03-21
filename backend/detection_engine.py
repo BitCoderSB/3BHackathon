@@ -61,7 +61,7 @@ class DetectionEngine:
 
         results = self.model.predict(frame, conf=self.conf, verbose=False)
         counts: dict[str, int] = {info[0]: 0 for info in CLASS_NAMES.values()}
-        all_detections: list[SlotDetection] = []
+        raw_detections: list[tuple[str, str, int, tuple, float]] = []
 
         if results and results[0].boxes is not None:
             boxes = results[0].boxes
@@ -74,25 +74,29 @@ class DetectionEngine:
                 if cls_id in CLASS_NAMES:
                     sku_id, sku_name = CLASS_NAMES[cls_id]
                     counts[sku_id] += 1
-                    count = counts[sku_id]
+                    raw_detections.append((sku_id, sku_name, cls_id, bbox, conf))
 
-                    pct = count / STOCK_INITIAL
-                    if pct > 0.50:
-                        stock_level = "ok"
-                    elif pct > 0.25:
-                        stock_level = "warning"
-                    else:
-                        stock_level = "critical"
+        # Segunda pasada: asignar stock_level basado en conteo total por SKU
+        all_detections: list[SlotDetection] = []
+        for sku_id, sku_name, cls_id, bbox, conf in raw_detections:
+            total = counts[sku_id]
+            pct = total / STOCK_INITIAL
+            if pct > 0.50:
+                stock_level = "ok"
+            elif pct > 0.25:
+                stock_level = "warning"
+            else:
+                stock_level = "critical"
 
-                    all_detections.append(SlotDetection(
-                        sku_id=sku_id,
-                        sku_name=sku_name,
-                        slot_id=cls_id + 1,
-                        bbox=bbox,
-                        confidence=conf,
-                        count=count,
-                        stock_level=stock_level,
-                    ))
+            all_detections.append(SlotDetection(
+                sku_id=sku_id,
+                sku_name=sku_name,
+                slot_id=cls_id + 1,
+                bbox=bbox,
+                confidence=conf,
+                count=total,
+                stock_level=stock_level,
+            ))
 
         return DetectionResult(
             timestamp=time.time(),

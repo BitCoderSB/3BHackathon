@@ -2,9 +2,9 @@
 # 70 imágenes etiquetadas con polígonos de segmentación (7 clases)
 # Split 80/20: 56 train, 14 val (seed=42)
 
-path: /Users/josezacarias/Hackaton3B-Reto1/assets/project-7-at-2026-03-20-21-09-0e2e8304
-train: /Users/josezacarias/Hackaton3B-Reto1/backend/train.txt
-val: /Users/josezacarias/Hackaton3B-Reto1/backend/val.txt
+path: c:/Users/Carlos/Documents/3B/assets/project-7-at-2026-03-20-21-09-0e2e8304
+train: c:/Users/Carlos/Documents/3B/backend/train.txt
+val: c:/Users/Carlos/Documents/3B/backend/val.txt
 
 # 7 clases de productos del anaquel
 names:

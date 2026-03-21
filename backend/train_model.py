@@ -17,8 +17,7 @@ BASE_MODEL = "yolov8n-seg.pt"
 EPOCHS = 50
 IMGSZ = 640
 BATCH = 8
-#DEVICE = "0" if torch.cuda.is_available() else "cpu"
-DEVICE = "mps"
+DEVICE = "0" if torch.cuda.is_available() else "cpu"
 
 
 def main():

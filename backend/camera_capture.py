@@ -141,8 +141,10 @@ class CameraCapture:
             last_time = now
 
             detections = []
+            detection_result = None
             if detection_engine is not None:
-                detections = detection_engine.detect(fd.frame)
+                detection_result = detection_engine.detect(fd.frame)
+                detections = detection_result.detections
 
             if overlay is not None:
                 drawn = overlay.draw_overlay(fd.frame, detections)
@@ -151,7 +153,7 @@ class CameraCapture:
                 frame_b64 = None
 
             # callback decide qué hacer (enviar al API, imprimir, etc.)
-            should_stop = callback(frame_b64, detections)
+            should_stop = callback(frame_b64, detection_result if detection_result else detections)
             if should_stop:
                 break
 

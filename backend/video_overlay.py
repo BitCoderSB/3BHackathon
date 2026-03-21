@@ -3,21 +3,11 @@
 import base64
 import glob
 import os
-from dataclasses import dataclass
 
 import cv2
 import numpy as np
 
-
-@dataclass
-class SlotDetection:
-    sku_id: str
-    sku_name: str
-    slot_id: int
-    bbox: tuple  # (x1, y1, x2, y2)
-    confidence: float
-    count: int
-    stock_level: str  # "ok" | "warning" | "critical"
+from contracts import SlotDetection
 
 
 # Colores BGR según nivel de stock
