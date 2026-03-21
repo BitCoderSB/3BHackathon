@@ -12,12 +12,12 @@ from ultralytics import YOLO
 # --- Configuración ---
 ROOT = Path(__file__).resolve().parent.parent
 DATASET_YAML = Path(__file__).resolve().parent / "dataset.yaml"
-OUTPUT_MODEL = ROOT / "models" / "best.pt"
+OUTPUT_MODEL = ROOT / "models" / "best2.pt"
 BASE_MODEL = "yolov8n-seg.pt"
-EPOCHS = 200        # ⬆️ Subimos a 200 para que afine las máscaras
+EPOCHS = 60        # ⬆️ Subimos a 200 para que afine las máscaras
 IMGSZ = 640
 BATCH = 8
-DEVICE = "mps"      # 🚀 Aceleración M1 activada
+DEVICE = "cpu"      # 🚀 Aceleración M1 activada
 
 
 def main():
@@ -48,7 +48,7 @@ def main():
 
     # Copiar mejor modelo a models/best.pt
     OUTPUT_MODEL.parent.mkdir(parents=True, exist_ok=True)
-    best_weights = Path(results.save_dir) / "weights" / "best.pt"
+    best_weights = Path(results.save_dir) / "weights" / "best3.pt"
     if best_weights.exists():
         shutil.copy2(best_weights, OUTPUT_MODEL)
         print(f"\nModelo guardado en: {OUTPUT_MODEL}")
