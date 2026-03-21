@@ -1,0 +1,17 @@
+# Dataset YOLO para entrenamiento YOLOv8-seg — Anaquel Tiendas 3B
+# 70 imágenes etiquetadas con polígonos de segmentación (7 clases)
+# Split 80/20: 56 train, 14 val (seed=42)
+
+path: /Users/josezacarias/Hackaton3B-Reto1/assets/project-7-at-2026-03-20-21-09-0e2e8304
+train: /Users/josezacarias/Hackaton3B-Reto1/backend/train.txt
+val: /Users/josezacarias/Hackaton3B-Reto1/backend/val.txt
+
+# 7 clases de productos del anaquel
+names:
+  0: agua_burst
+  1: burst_energetica_roja
+  2: burst_energy
+  3: nachos_naturasol
+  4: nebraska_mango
+  5: sisi_cola
+  6: sun_paradise_naranja
