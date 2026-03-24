@@ -1,12 +1,14 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { useState } from "react";
-import { NAV_ITEMS, MOCK_STORE } from "../mocks/mockData";
+import { NAV_ITEMS } from "../mocks/mockData";
+import { useSocketContext } from "../hooks/useSocket";
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
-  const onlineCams = MOCK_STORE.cameras.filter(c => c.status === "online").length;
-  const totalCams = MOCK_STORE.cameras.length;
+  const { cameras, storeName, connected } = useSocketContext();
+  const onlineCams = cameras.filter(c => c.status === "online").length;
+  const totalCams = cameras.length;
 
   return (
     <aside
@@ -50,7 +52,7 @@ export default function Sidebar() {
         <div className="px-3 py-3 border-b border-gray-100">
           <div className="bg-surface-page rounded-2xl px-3 py-2.5 transition-colors hover:bg-gray-100 cursor-pointer">
             <p className="section-label">Sucursal</p>
-            <p className="text-dense-xs font-semibold text-gray-700 truncate mt-0.5">{MOCK_STORE.store_name}</p>
+            <p className="text-dense-xs font-semibold text-gray-700 truncate mt-0.5">{storeName}</p>
           </div>
         </div>
       )}
@@ -100,7 +102,7 @@ export default function Sidebar() {
                 <span className="text-xs">📷</span>
                 <span className="text-[11px] text-gray-400">{onlineCams}/{totalCams} cámaras</span>
               </div>
-              {MOCK_STORE.cameras.map(c => (
+              {cameras.map(c => (
                 <span
                   key={c.source_id}
                   className={`connection-dot ${

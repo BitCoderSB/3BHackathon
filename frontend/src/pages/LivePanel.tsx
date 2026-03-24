@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
-import { MOCK_STORE, MOCK_PRODUCTS_CAM1, MOCK_PRODUCTS_CAM2, MOCK_NARRATIVES, MOCK_EVENTS, MOCK_PREDICTIONS } from "../mocks/mockData";
+import { useSocketContext } from "../hooks/useSocket";
+import VideoFeed from "../components/VideoFeed";
 import type { ProductStock } from "../types";
 
 /* ── SemiCircleGauge (copied from ProductCatalog) ── */
@@ -86,15 +87,13 @@ function StockBar({ product }: { product: ProductStock }) {
 
 export default function LivePanel() {
   const navigate = useNavigate();
+  const { products: socketProducts, narratives, events, predictions, connected, usingMock, videoFrame, cameras } = useSocketContext();
   const [selectedCam, setSelectedCam] = useState<string | "all">("all");
   const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set());
-  const cameras = MOCK_STORE.cameras;
 
-  const products = selectedCam === "all"
-    ? MOCK_PRODUCTS_CAM1
-    : selectedCam === "cam-1" ? MOCK_PRODUCTS_CAM1 : MOCK_PRODUCTS_CAM2;
+  const products = socketProducts;
 
-  const alerts = MOCK_NARRATIVES.filter(n => n.severity === "critical" || n.severity === "warning");
+  const alerts = narratives.filter(n => n.severity === "critical" || n.severity === "warning");
   const totalProducts = products.length;
   const alertCount = products.filter(p => p.alert_active).length;
   const totalStock = products.reduce((s, p) => s + p.stock_current, 0);
@@ -110,8 +109,8 @@ export default function LivePanel() {
           <h1 className="page-heading flex-shrink-0" style={{ fontSize: '30px' }}>Panel en Vivo</h1>
           <div className="flex items-center gap-3 flex-1 justify-end">
             <div className="flex items-center gap-1.5 text-gray-400">
-              <span className="connection-dot connection-dot-online" />
-              <span className="text-[10px] font-medium">Conectado</span>
+              <span className={`connection-dot ${connected ? "connection-dot-online" : "connection-dot-offline"}`} />
+              <span className="text-[10px] font-medium">{connected ? "Conectado" : usingMock ? "Mock" : "Desconectado"}</span>
             </div>
             <div className="h-5 w-px bg-gray-200" />
             <div className="flex gap-1">
@@ -200,7 +199,7 @@ export default function LivePanel() {
           {(() => {
             const critical = products.filter(p => p.alert_level === "critical");
             const low = products.filter(p => p.alert_level === "low");
-            const topPred = MOCK_PREDICTIONS.filter(p => p.minutes_remaining !== null && p.minutes_remaining < 60);
+            const topPred = predictions.filter(p => p.minutes_remaining !== null && p.minutes_remaining < 60);
             const okCount = products.filter(p => p.alert_level === "normal").length;
             const parts: string[] = [];
 
@@ -240,14 +239,19 @@ export default function LivePanel() {
           {selectedCam === "all" ? (
             <div className="grid grid-cols-2 gap-grid-gap">
               {cameras.map(cam => (
-                <CameraFeedCard key={cam.source_id} label={cam.label} location={cam.location} status={cam.status} />
+                <VideoFeed
+                  key={cam.source_id}
+                  frame={videoFrame}
+                  label={cam.label}
+                  location={cam.location}
+                />
               ))}
             </div>
           ) : (
-            <CameraFeedCard
+            <VideoFeed
+              frame={videoFrame}
               label={cameras.find(c => c.source_id === selectedCam)!.label}
               location={cameras.find(c => c.source_id === selectedCam)!.location}
-              status={cameras.find(c => c.source_id === selectedCam)!.status}
               large
             />
           )}
@@ -316,10 +320,10 @@ export default function LivePanel() {
           <div className="col-span-5 bento-card-static overflow-hidden">
             <div className="px-card-pad pt-3 pb-2 border-b border-gray-100 flex items-center justify-between">
               <h2 className="card-heading">Últimos Eventos</h2>
-              <span className="text-[10px] text-gray-400">{MOCK_EVENTS.length} eventos</span>
+              <span className="text-[10px] text-gray-400">{events.length} eventos</span>
             </div>
             <div className="divide-y divide-gray-50">
-              {MOCK_EVENTS.slice(0, 5).map((ev, i) => (
+              {events.slice(0, 5).map((ev, i) => (
                 <div key={ev.event_id} className="px-card-pad py-2 flex items-center gap-3 animate-slide-in" style={{ animationDelay: `${i * 60}ms` }}>
                   <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs flex-shrink-0 ${
                     ev.action === "removed" ? "bg-red-50 text-red-500" : "bg-green-50 text-green-500"
@@ -350,7 +354,7 @@ export default function LivePanel() {
               </div>
             </div>
             <div className="divide-y divide-gray-50 max-h-[260px] overflow-y-auto">
-              {MOCK_NARRATIVES.slice().reverse().map((msg, i) => (
+              {narratives.slice().reverse().map((msg, i) => (
                 <div key={msg.message_id} className="px-card-pad py-2.5 flex items-start gap-2.5 animate-slide-in" style={{ animationDelay: `${i * 60}ms` }}>
                   <span className="text-sm flex-shrink-0 mt-0.5">{msg.icon}</span>
                   <div className="flex-1 min-w-0">
@@ -377,7 +381,7 @@ export default function LivePanel() {
           <div className="col-span-3 bento-card-static p-card-pad">
             <h2 className="card-heading mb-3">En Riesgo</h2>
             <div className="space-y-3">
-              {MOCK_PREDICTIONS.filter(p => p.minutes_remaining !== null && p.minutes_remaining < 150).map((pred, i) => {
+              {predictions.filter(p => p.minutes_remaining !== null && p.minutes_remaining < 150).map((pred, i) => {
                 const urgency = pred.minutes_remaining! < 60 ? "urgent" : "warning";
                 return (
                   <div
@@ -409,7 +413,7 @@ export default function LivePanel() {
                   </div>
                 );
               })}
-              {MOCK_PREDICTIONS.filter(p => p.minutes_remaining !== null && p.minutes_remaining < 150).length === 0 && (
+              {predictions.filter(p => p.minutes_remaining !== null && p.minutes_remaining < 150).length === 0 && (
                 <div className="text-center py-8">
                   <span className="text-2xl">✅</span>
                   <p className="text-dense-xs text-gray-400 mt-2">Sin productos en riesgo</p>
@@ -424,32 +428,4 @@ export default function LivePanel() {
   );
 }
 
-/* ── Camera Feed Card — skill: Real-Time Monitoring → live indicator, connection status ── */
-function CameraFeedCard({ label, location, status, large }: { label: string; location: string; status: string; large?: boolean }) {
-  return (
-    <div className={`bento-card overflow-hidden ${large ? "min-h-[420px]" : "min-h-[260px]"} animate-slide-in`}>
-      <div className="px-card-pad pt-3 pb-2 flex items-center justify-between border-b border-gray-100">
-        <div className="flex items-center gap-2">
-          <span className={`connection-dot ${status === "online" ? "connection-dot-online" : "connection-dot-offline"}`} />
-          <h3 className="card-heading">{label}</h3>
-          <span className="section-label normal-case">— {location}</span>
-        </div>
-        <div className="live-badge">
-          <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse-live" />
-          EN VIVO
-        </div>
-      </div>
-      <div className="flex-1 flex items-center justify-center bg-gradient-to-b from-gray-50 to-gray-100/50 p-8">
-        <div className="text-center">
-          <div className="w-16 h-16 rounded-3xl bg-gray-200/80 flex items-center justify-center mx-auto mb-3">
-            <span className="text-2xl text-gray-400">📷</span>
-          </div>
-          <p className="text-dense-sm font-medium text-gray-400">{label}</p>
-          <p className="text-dense-xs text-gray-300 mt-1">
-            {status === "online" ? "Esperando stream del backend..." : "Cámara desconectada"}
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
+/* CameraFeedCard replaced by VideoFeed component — see src/components/VideoFeed.tsx */

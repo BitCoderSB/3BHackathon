@@ -1,21 +1,36 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
-import { MOCK_PREDICTIONS, MOCK_HEATMAP, MOCK_EVENTS, MOCK_STORE } from "../mocks/mockData";
-import type { StockPrediction, HeatmapSlot } from "../types";
+import { useSocketContext } from "../hooks/useSocket";
+import type { StockPrediction, HeatmapSlot, DetectionEvent } from "../types";
 
-/* ── Timeline mock data — all 7 products ── */
-const TIMELINE_DATA = [
-  { time: "13:30", agua_burst: 8, burst_roja: 8, burst_energy: 8, nachos: 8, nebraska: 8, sisi_cola: 8, sun_paradise: 8 },
-  { time: "13:40", agua_burst: 8, burst_roja: 7, burst_energy: 8, nachos: 7, nebraska: 8, sisi_cola: 7, sun_paradise: 7 },
-  { time: "13:50", agua_burst: 8, burst_roja: 7, burst_energy: 8, nachos: 6, nebraska: 7, sisi_cola: 7, sun_paradise: 6 },
-  { time: "14:00", agua_burst: 8, burst_roja: 6, burst_energy: 8, nachos: 5, nebraska: 7, sisi_cola: 6, sun_paradise: 5 },
-  { time: "14:10", agua_burst: 8, burst_roja: 6, burst_energy: 8, nachos: 4, nebraska: 7, sisi_cola: 5, sun_paradise: 5 },
-  { time: "14:15", agua_burst: 7, burst_roja: 6, burst_energy: 8, nachos: 4, nebraska: 6, sisi_cola: 5, sun_paradise: 4 },
-  { time: "14:20", agua_burst: 7, burst_roja: 6, burst_energy: 8, nachos: 4, nebraska: 6, sisi_cola: 5, sun_paradise: 4 },
-  { time: "14:25", agua_burst: 7, burst_roja: 5, burst_energy: 8, nachos: 3, nebraska: 6, sisi_cola: 5, sun_paradise: 4 },
-  { time: "14:30", agua_burst: 7, burst_roja: 5, burst_energy: 8, nachos: 2, nebraska: 6, sisi_cola: 4, sun_paradise: 3 },
-  { time: "14:35", agua_burst: 7, burst_roja: 5, burst_energy: 8, nachos: 2, nebraska: 6, sisi_cola: 4, sun_paradise: 3 },
-];
+/* ── Build timeline data from detection events ── */
+const SKU_KEYS: Record<string, string> = {
+  agua_burst: "agua_burst",
+  burst_energetica_roja: "burst_roja",
+  burst_energy: "burst_energy",
+  nachos_naturasol: "nachos",
+  nebraska_mango: "nebraska",
+  sisi_cola: "sisi_cola",
+  sun_paradise_naranja: "sun_paradise",
+};
+
+function buildTimeline(events: DetectionEvent[]) {
+  if (events.length === 0) return [];
+  // Sort oldest first
+  const sorted = [...events].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  // Group by 5-minute buckets
+  const buckets = new Map<string, Record<string, number>>();
+  for (const ev of sorted) {
+    const d = new Date(ev.timestamp);
+    const mins = Math.floor(d.getMinutes() / 5) * 5;
+    const key = `${String(d.getHours()).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
+    const chartKey = SKU_KEYS[ev.sku_id] || ev.sku_id;
+    if (!buckets.has(key)) buckets.set(key, {});
+    // Use stock_after as the stock level at that time
+    buckets.get(key)![chartKey] = ev.stock_after;
+  }
+  return Array.from(buckets.entries()).map(([time, data]) => ({ time, ...data }));
+}
 
 const TIME_RANGES = [
   { label: "15 min", points: 4 },
@@ -46,14 +61,18 @@ function heatmapColor(intensity: number): string {
 const CARDS_PER_VIEW = 4;
 
 export default function Analytics() {
+  const { predictions, heatmap, events, cameras } = useSocketContext();
   const [camFilter, setCamFilter] = useState<string | "all">("all");
   const [carouselIdx, setCarouselIdx] = useState(0);
   const [timeRange, setTimeRange] = useState(2); // index in TIME_RANGES
   const carouselRef = useRef<HTMLDivElement>(null);
 
-  const maxPage = Math.ceil(MOCK_PREDICTIONS.length / CARDS_PER_VIEW) - 1;
-  const visiblePredictions = MOCK_PREDICTIONS.slice(carouselIdx * CARDS_PER_VIEW, carouselIdx * CARDS_PER_VIEW + CARDS_PER_VIEW);
-  const timelineData = TIMELINE_DATA.slice(-TIME_RANGES[timeRange].points);
+  const heatmapSlots = heatmap?.slots ?? [];
+  const timelineAll = useMemo(() => buildTimeline(events), [events]);
+
+  const maxPage = Math.max(0, Math.ceil(predictions.length / CARDS_PER_VIEW) - 1);
+  const visiblePredictions = predictions.slice(carouselIdx * CARDS_PER_VIEW, carouselIdx * CARDS_PER_VIEW + CARDS_PER_VIEW);
+  const timelineData = timelineAll.slice(-TIME_RANGES[timeRange].points);
 
   return (
     <div className="p-4 space-y-4">
@@ -64,13 +83,13 @@ export default function Analytics() {
           <p className="text-dense-xs text-gray-400 mt-0.5">Predicciones, heatmap y tendencias</p>
         </div>
         <div className="flex gap-1">
-          {["all", ...MOCK_STORE.cameras.map(c => c.source_id)].map(id => (
+          {["all", ...cameras.map(c => c.source_id)].map(id => (
             <button
               key={id}
               onClick={() => setCamFilter(id)}
               className={`pill-toggle ${camFilter === id ? "pill-toggle-active" : "pill-toggle-inactive"}`}
             >
-              {id === "all" ? "Todas" : MOCK_STORE.cameras.find(c => c.source_id === id)?.label}
+              {id === "all" ? "Todas" : cameras.find(c => c.source_id === id)?.label}
             </button>
           ))}
         </div>
@@ -124,7 +143,7 @@ export default function Analytics() {
             <span className="text-[10px] text-gray-400">Últimos 5 min</span>
           </div>
           <div className="grid grid-cols-4 gap-1.5">
-            {MOCK_HEATMAP.slots.map(slot => (
+            {heatmapSlots.map(slot => (
               <HeatmapCell key={slot.slot_id} slot={slot} />
             ))}
           </div>
@@ -223,7 +242,7 @@ export default function Analytics() {
               </tr>
             </thead>
             <tbody>
-              {MOCK_EVENTS.map(ev => (
+              {events.map(ev => (
                 <tr key={ev.event_id}>
                   <td className="text-gray-500 font-mono tabular-nums">
                     {new Date(ev.timestamp).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}

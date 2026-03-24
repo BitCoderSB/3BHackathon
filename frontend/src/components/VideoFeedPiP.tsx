@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { MOCK_STORE } from "../mocks/mockData";
+import { useSocketContext } from "../hooks/useSocket";
 
 export default function VideoFeedPiP() {
   const [activeCam, setActiveCam] = useState(0);
   const [minimized, setMinimized] = useState(false);
-  const cam = MOCK_STORE.cameras[activeCam];
+  const { videoFrame, connected, cameras } = useSocketContext();
+  const cam = cameras[activeCam] ?? { label: "Cámara", location: "", source_id: "cam-1", status: "offline" as const };
+  const hasFrame = !!videoFrame;
 
   if (minimized) {
     return (
@@ -21,17 +23,32 @@ export default function VideoFeedPiP() {
   return (
     <div className="fixed bottom-4 right-4 z-50 w-[280px] rounded-3xl overflow-hidden shadow-bento-hover border border-gray-200/60 bg-black animate-slide-in">
       {/* Placeholder del video */}
-      <div className="relative aspect-video bg-gradient-to-b from-gray-800 to-gray-900 flex items-center justify-center">
-        <div className="text-center">
-          <span className="text-3xl">📷</span>
-          <p className="text-dense-xs text-gray-400 mt-1">{cam.label}</p>
-          <p className="text-[9px] text-gray-500">{cam.location}</p>
-        </div>
-        {/* Live badge — skill: live-badge class */}
-        <div className="absolute top-2 left-2 live-badge">
-          <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse-live" />
-          EN VIVO
-        </div>
+      <div className="relative aspect-video bg-gradient-to-b from-gray-800 to-gray-900 flex items-center justify-center overflow-hidden">
+        {hasFrame ? (
+          <img
+            src={videoFrame!.startsWith("data:") ? videoFrame! : `data:image/jpeg;base64,${videoFrame}`}
+            alt={`Feed de ${cam.label}`}
+            className="w-full h-full object-contain"
+          />
+        ) : (
+          <div className="text-center">
+            <span className="text-3xl">📷</span>
+            <p className="text-dense-xs text-gray-400 mt-1">{cam.label}</p>
+            <p className="text-[9px] text-gray-500">{cam.location}</p>
+          </div>
+        )}
+        {/* Live badge */}
+        {hasFrame ? (
+          <div className="absolute top-2 left-2 live-badge">
+            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse-live" />
+            EN VIVO
+          </div>
+        ) : (
+          <div className="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded-lg bg-gray-700/80 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+            <span className="w-1.5 h-1.5 rounded-full bg-gray-500" />
+            SIN SEÑAL
+          </div>
+        )}
         {/* Minimize button */}
         <button
           onClick={() => setMinimized(true)}
@@ -44,7 +61,7 @@ export default function VideoFeedPiP() {
       {/* Camera controls — skill: pill-toggle + connection-dot */}
       <div className="bg-white px-3 py-2 flex items-center justify-between">
         <div className="flex gap-1">
-          {MOCK_STORE.cameras.map((c, i) => (
+          {cameras.map((c, i) => (
             <button
               key={c.source_id}
               onClick={() => setActiveCam(i)}
@@ -54,7 +71,7 @@ export default function VideoFeedPiP() {
             </button>
           ))}
         </div>
-        <span className={`connection-dot ${cam.status === "online" ? "connection-dot-online" : "connection-dot-offline"}`} />
+        <span className={`connection-dot ${connected ? "connection-dot-online" : "connection-dot-offline"}`} />
       </div>
     </div>
   );
