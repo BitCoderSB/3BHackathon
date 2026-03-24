@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { MOCK_STORE, MOCK_PRODUCTS_CAM1, MOCK_PRODUCTS_CAM2, MOCK_NARRATIVES } from "../mocks/mockData";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { MOCK_STORE, MOCK_PRODUCTS_CAM1, MOCK_PRODUCTS_CAM2, MOCK_NARRATIVES, MOCK_EVENTS, MOCK_PREDICTIONS } from "../mocks/mockData";
 import type { ProductStock } from "../types";
 
 /* ── SemiCircleGauge (copied from ProductCatalog) ── */
@@ -152,7 +153,7 @@ export default function LivePanel() {
         {/* KPI Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-center mt-6 pt-5 border-t border-gray-100 gap-4 sm:gap-8">
           {/* Productos */}
-          <div className="flex flex-col">
+          <div className="flex flex-col items-center">
             <span className="text-[13px] text-[#8A8A8A]">Productos</span>
             <span className="text-[26px] font-semibold text-[#1A1A1A] leading-tight tabular-nums">{totalProducts}</span>
           </div>
@@ -161,7 +162,7 @@ export default function LivePanel() {
           <div className="sm:hidden h-px w-full bg-[#E5E5E5]" />
 
           {/* Disponibilidad — with SemiCircleGauge */}
-          <div className="flex flex-col">
+          <div className="flex flex-col items-center">
             <span className="text-[13px] text-[#8A8A8A]">Disponibilidad</span>
             <div className="flex items-center gap-2 mt-0.5">
               <SemiCircleGauge current={pctAvail} initial={100} />
@@ -177,7 +178,7 @@ export default function LivePanel() {
           <div className="sm:hidden h-px w-full bg-[#E5E5E5]" />
 
           {/* Alertas Activas */}
-          <div className="flex flex-col">
+          <div className="flex flex-col items-center">
             <span className="text-[13px] text-[#8A8A8A]">Alertas Activas</span>
             <span className={`text-[26px] font-semibold leading-tight tabular-nums ${
               alertCount > 0 ? 'text-red-500' : 'text-[#1A1A1A]'
@@ -188,11 +189,46 @@ export default function LivePanel() {
           <div className="sm:hidden h-px w-full bg-[#E5E5E5]" />
 
           {/* Cámaras Online */}
-          <div className="flex flex-col">
+          <div className="flex flex-col items-center">
             <span className="text-[13px] text-[#8A8A8A]">Cámaras Online</span>
             <span className="text-[26px] font-semibold text-[#1A1A1A] leading-tight tabular-nums">{cameras.filter(c => c.status === "online").length}/{cameras.length}</span>
           </div>
         </div>
+
+        {/* Resumen en texto natural */}
+        <p className="mt-4 text-[12px] text-gray-500 leading-relaxed text-center max-w-3xl mx-auto">
+          {(() => {
+            const critical = products.filter(p => p.alert_level === "critical");
+            const low = products.filter(p => p.alert_level === "low");
+            const topPred = MOCK_PREDICTIONS.filter(p => p.minutes_remaining !== null && p.minutes_remaining < 60);
+            const okCount = products.filter(p => p.alert_level === "normal").length;
+            const parts: string[] = [];
+
+            if (critical.length > 0) {
+              parts.push(`${critical.map(p => p.sku_name.split(" ").slice(0, 3).join(" ")).join(" y ")} en nivel crítico`);
+            }
+            if (topPred.length > 0) {
+              parts.push(`${topPred.map(p => p.sku_name.split(" ").slice(0, 3).join(" ")).join(" y ")} podría${topPred.length === 1 ? "" : "n"} agotarse en menos de una hora`);
+            }
+            if (low.length > 0) {
+              parts.push(`${low.map(p => p.sku_name.split(" ").slice(0, 3).join(" ")).join(" y ")} con stock bajo`);
+            }
+
+            let summary = okCount === products.length
+              ? `Todos los productos están en buen nivel.`
+              : `${parts.join(" · ")}. ${okCount} de ${products.length} productos en buen nivel.`;
+
+            summary += " Monitoreado en tiempo real por visión por computadora, sin etiquetas ni sensores.";
+
+            const segments = summary.split(" · ");
+            return segments.map((seg, i) => (
+              <span key={i}>
+                {i > 0 && <span className="text-brand-red font-bold mx-1">·</span>}
+                {seg}
+              </span>
+            ));
+          })()}
+        </p>
       </div>
 
       {/* ── Bottom section — full-width background ── */}
@@ -217,7 +253,7 @@ export default function LivePanel() {
           )}
         </div>
 
-        {/* Stock Panel — 4 cols, skill: Data-Dense compact, 36px rows */}
+        {/* Stock Panel — 4 cols, horizontal bar chart */}
         <div className="col-span-4 bento-card-static p-card-pad flex flex-col">
           <div className="flex items-center justify-between mb-3">
             <h2 className="card-heading">Inventario</h2>
@@ -229,22 +265,159 @@ export default function LivePanel() {
               {pctAvail}% disponible
             </span>
           </div>
-          {/* Progress overview bar — skill: Gauge → Red→Yellow→Green */}
-          <div className="h-2 bg-gray-100 rounded-full overflow-hidden mb-4">
-            <div
-              className={`h-full rounded-full transition-all duration-700 ${
-                pctAvail > 70 ? "bg-status-green" : pctAvail > 40 ? "bg-status-yellow" : "bg-status-red"
-              }`}
-              style={{ width: `${pctAvail}%` }}
-            />
-          </div>
-          <div className="flex-1 space-y-0.5 overflow-y-auto">
-            {products.map(p => (
-              <StockBar key={p.sku_id + p.source_id} product={p} />
-            ))}
+          <div className="flex-1 overflow-y-auto">
+            <ResponsiveContainer width="100%" height={products.length * 42 + 20}>
+              <BarChart
+                data={products.map(p => ({
+                  name: p.sku_name.split(" ").slice(0, 2).join(" "),
+                  stock: p.stock_current,
+                  initial: p.stock_initial,
+                  pct: Math.round((p.stock_current / p.stock_initial) * 100),
+                  alert: p.alert_active,
+                }))}
+                layout="vertical"
+                margin={{ top: 4, right: 40, bottom: 4, left: 4 }}
+                barCategoryGap="20%"
+              >
+                <XAxis type="number" domain={[0, 8]} tick={{ fontSize: 10, fill: "#9CA3AF" }} axisLine={false} tickLine={false} />
+                <YAxis
+                  type="category"
+                  dataKey="name"
+                  width={90}
+                  tick={{ fontSize: 11, fill: "#374151" }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <Tooltip
+                  contentStyle={{ fontSize: 11, borderRadius: 12, border: "1px solid #E5E7EB", boxShadow: "0 4px 6px rgba(0,0,0,0.05)" }}
+                  formatter={(value: number, _name: string, props: any) => [
+                    `${value}/${props.payload.initial} (${props.payload.pct}%)`,
+                    "Stock"
+                  ]}
+                />
+                <Bar dataKey="stock" radius={[0, 6, 6, 0]} barSize={16}
+                  label={{ position: "right", fontSize: 10, fill: "#6B7280", formatter: (v: number) => `${v}` }}
+                >
+                  {products.map((p, i) => {
+                    const pct = (p.stock_current / p.stock_initial) * 100;
+                    const fill = pct <= 25 ? "#EF4444" : pct <= 50 ? "#F59E0B" : "#22C55E";
+                    return <Cell key={i} fill={fill} />;
+                  })}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
       </div>
+
+        {/* ── Second row — Events + Narrative + Productos en Riesgo ── */}
+        <div className="grid grid-cols-12 gap-4 mt-4">
+          {/* Últimos Eventos — 5 cols */}
+          <div className="col-span-5 bento-card-static overflow-hidden">
+            <div className="px-card-pad pt-3 pb-2 border-b border-gray-100 flex items-center justify-between">
+              <h2 className="card-heading">Últimos Eventos</h2>
+              <span className="text-[10px] text-gray-400">{MOCK_EVENTS.length} eventos</span>
+            </div>
+            <div className="divide-y divide-gray-50">
+              {MOCK_EVENTS.slice(0, 5).map((ev, i) => (
+                <div key={ev.event_id} className="px-card-pad py-2 flex items-center gap-3 animate-slide-in" style={{ animationDelay: `${i * 60}ms` }}>
+                  <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs flex-shrink-0 ${
+                    ev.action === "removed" ? "bg-red-50 text-red-500" : "bg-green-50 text-green-500"
+                  }`}>
+                    {ev.action === "removed" ? "↓" : "↑"}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-dense-xs font-medium text-gray-700 truncate">{ev.sku_name}</p>
+                    <p className="text-[10px] text-gray-400">
+                      {ev.action === "removed" ? "Retirado" : "Devuelto"} · {ev.stock_before} → {ev.stock_after} uds
+                    </p>
+                  </div>
+                  <span className="text-[10px] text-gray-400 tabular-nums flex-shrink-0">
+                    {new Date(ev.timestamp).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Narrativa en Vivo — 4 cols */}
+          <div className="col-span-4 bento-card-static overflow-hidden">
+            <div className="px-card-pad pt-3 pb-2 border-b border-gray-100 flex items-center justify-between">
+              <h2 className="card-heading">Narrativa en Vivo</h2>
+              <div className="live-badge" style={{ fontSize: '9px', padding: '1px 6px' }}>
+                <span className="w-1 h-1 rounded-full bg-white animate-pulse-live" />
+                VIVO
+              </div>
+            </div>
+            <div className="divide-y divide-gray-50 max-h-[260px] overflow-y-auto">
+              {MOCK_NARRATIVES.slice().reverse().map((msg, i) => (
+                <div key={msg.message_id} className="px-card-pad py-2.5 flex items-start gap-2.5 animate-slide-in" style={{ animationDelay: `${i * 60}ms` }}>
+                  <span className="text-sm flex-shrink-0 mt-0.5">{msg.icon}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-dense-xs text-gray-700 leading-snug">{msg.text}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-[9px] text-gray-400 tabular-nums">
+                        {new Date(msg.timestamp).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                      </span>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-medium ${
+                        msg.severity === "critical" ? "bg-red-50 text-red-500" :
+                        msg.severity === "warning" ? "bg-amber-50 text-amber-600" :
+                        "bg-blue-50 text-blue-500"
+                      }`}>
+                        {msg.severity === "critical" ? "Crítico" : msg.severity === "warning" ? "Aviso" : "Info"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Productos en Riesgo — 3 cols */}
+          <div className="col-span-3 bento-card-static p-card-pad">
+            <h2 className="card-heading mb-3">En Riesgo</h2>
+            <div className="space-y-3">
+              {MOCK_PREDICTIONS.filter(p => p.minutes_remaining !== null && p.minutes_remaining < 150).map((pred, i) => {
+                const urgency = pred.minutes_remaining! < 60 ? "urgent" : "warning";
+                return (
+                  <div
+                    key={pred.sku_id}
+                    className={`rounded-xl p-3 border-l-4 animate-slide-in ${
+                      urgency === "urgent" ? "border-l-red-500 bg-red-50/50" : "border-l-amber-400 bg-amber-50/50"
+                    }`}
+                    style={{ animationDelay: `${i * 80}ms` }}
+                  >
+                    <p className="text-dense-xs font-semibold text-gray-700 truncate">{pred.sku_name}</p>
+                    <div className="flex items-center justify-between mt-1.5">
+                      <span className="text-[10px] text-gray-400">Stock</span>
+                      <span className="text-dense-xs font-bold tabular-nums text-gray-700">{pred.stock_current}/8</span>
+                    </div>
+                    <div className="flex items-center justify-between mt-0.5">
+                      <span className="text-[10px] text-gray-400">Se agota en</span>
+                      <span className={`text-dense-xs font-bold tabular-nums ${
+                        urgency === "urgent" ? "text-red-500" : "text-amber-600"
+                      }`}>
+                        ~{pred.minutes_remaining} min
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between mt-0.5">
+                      <span className="text-[10px] text-gray-400">Tendencia</span>
+                      <span className="text-[10px]">
+                        {pred.trend === "acelerando" ? "🔺 Acelerando" : pred.trend === "desacelerando" ? "🔻 Desacelerando" : "➡️ Estable"}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+              {MOCK_PREDICTIONS.filter(p => p.minutes_remaining !== null && p.minutes_remaining < 150).length === 0 && (
+                <div className="text-center py-8">
+                  <span className="text-2xl">✅</span>
+                  <p className="text-dense-xs text-gray-400 mt-2">Sin productos en riesgo</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
 
       </div>
     </div>
