@@ -1,5 +1,8 @@
 # Dependencias Python
 backend/.venv/
+backend/venv/
+venv
+venv/bin/
 __pycache__/
 *.pyc
 *.pyo
@@ -27,3 +30,6 @@ Thumbs.db
 # Env
 .env
 *.log
+runs
+runs/anaquel_3b_v25/weights/
+.gitignore
