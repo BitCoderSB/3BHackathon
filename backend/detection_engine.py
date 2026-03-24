@@ -5,7 +5,6 @@ Hackathon Tiendas 3B
 """
 from __future__ import annotations
 
-import glob
 import uuid
 from collections import defaultdict
 from datetime import datetime
@@ -22,27 +21,109 @@ from contracts import (
 
 # --- Rutas ---
 ROOT = Path(__file__).resolve().parent.parent
-MODEL_PATH = ROOT / "models" / "best.pt"
+MODEL_PATH = ROOT / "models" / "best2.pt"
 
-# --- Mapa de clases (debe coincidir con classes.txt) ---
+# --- Mapa de clases (debe coincidir con classes.txt y productosdelanaquel.md) ---
 CLASS_NAMES = {
-    0: ("agua_burst", "Agua Natural Burst 1500ml"),
-    1: ("burst_energetica_roja", "Bebida Energetica Red Burst 473ml"),
-    2: ("burst_energy", "Bebida Energetica Original Burst Energy 600ml"),
-    3: ("nachos_naturasol", "Nachos Con Sal Naturasol 200gr"),
-    4: ("nebraska_mango", "Bebida Mango-Durazno Nebraska 460ml"),
-    5: ("sisi_cola", "Refresco Cola Sin Azucar Sisi 355ml"),
-    6: ("sun_paradise_naranja", "Bebida Naranja Sun Paradise 900ml"),
+    0: ("agua_burst", "Agua Natural Burst 1500 ml"),
+    1: ("burst_energetica_roja", "Bebida Energetica Red Burst 473 ml"),
+    2: ("burst_energy", "Bebida Energetica Original Burst Energy 600 ml"),
+    3: ("nachos_naturasol", "Nachos Con Sal Naturasol 200 gr"),
+    4: ("nebraska_mango", "Bebida Mango-Durazno Nebraska 460 ml"),
+    5: ("sisi_cola", "Refresco Cola Sin Azucar Sisi 355 ml"),
+    6: ("sun_paradise_naranja", "Bebida Naranja Sun Paradise 900 ml"),
+}
+
+# Metadata de productos (de productosdelanaquel.md / Hackaton-datos_productos.csv)
+PRODUCT_META = {
+    "agua_burst":           {"src_product_id": 7746,  "barcode": 7502261250185, "presentation": "1500 ml", "line_name": "Agua Natural",           "group_name": "Water",      "iventa": 6},
+    "burst_energetica_roja": {"src_product_id": 11024, "barcode": 7502261254411, "presentation": "473 ml",  "line_name": "Energetica Isotonica",   "group_name": "Beverages",  "iventa": 1},
+    "burst_energy":         {"src_product_id": 22013, "barcode": 7502261273047, "presentation": "600 ml",  "line_name": "Energetica Isotonica",   "group_name": "Beverages",  "iventa": 12.5},
+    "nachos_naturasol":     {"src_product_id": 25996, "barcode": 7503052023278, "presentation": "200 gr",  "line_name": "Frituras",               "group_name": "Snacks",     "iventa": 22},
+    "nebraska_mango":       {"src_product_id": 26449, "barcode": 7502261273504, "presentation": "460 ml",  "line_name": "Jugos y Bebidas",        "group_name": "Beverages",  "iventa": 14},
+    "sisi_cola":            {"src_product_id": 22287, "barcode": 7502261272415, "presentation": "355 ml",  "line_name": "Refrescos",              "group_name": "Beverages",  "iventa": 11},
+    "sun_paradise_naranja": {"src_product_id": 24338, "barcode": 7502261269576, "presentation": "900 ml",  "line_name": "Jugos y Bebidas",        "group_name": "Beverages",  "iventa": 18},
 }
 
 STOCK_INITIAL = 8  # Unidades iniciales por SKU
 
 
+# --- Contratos (C2, C3) ---
+class EventType(Enum):
+    RETIRO = "retiro"
+    DEVOLUCION = "devolucion"
+
+
+@dataclass
+class DetectionEvent:
+    event_id: str
+    event_type: EventType
+    sku_id: str
+    sku_name: str
+    slot_id: int
+    confidence: float
+    timestamp: datetime
+    bbox: tuple[int, int, int, int]
+    count_before: int
+    count_after: int
+
+
+@dataclass
+class SlotDetection:
+    sku_id: str
+    sku_name: str
+    slot_id: int
+    bbox: tuple[int, int, int, int]
+    confidence: float
+    count: int
+    stock_level: str  # "ok" | "warning" | "critical"
+
+
+@dataclass
+class DetectionResult:
+    timestamp: float
+    counts: dict[str, int]  # sku_id -> cantidad detectada
+    detections: list[SlotDetection] = field(default_factory=list)
+
+
+@dataclass
+class AnnotatedFrame:
+    frame: np.ndarray
+    timestamp: float
+    detections: list[SlotDetection]
+
+
+@dataclass
+class InteractionEvent:
+    slot_id: int
+    sku_id: str
+    region: tuple[int, int, int, int]
+    timestamp: datetime
+    interaction_type: str  # "hand_detected" | "product_moved"
+
+
+# --- Carpeta de frames de debug ---
+DEBUG_FRAMES_DIR = ROOT / "backend" / "debug_frames"
+
+# Colores BGR según nivel de stock (para debug frames)
+_STOCK_COLORS = {
+    "ok": (0, 200, 0),
+    "warning": (0, 200, 255),
+    "critical": (0, 0, 220),
+}
+
+
 # --- Motor de detección ---
 class DetectionEngine:
-    def __init__(self, model_path: str | Path = MODEL_PATH, conf: float = 0.5):
+    def __init__(self, model_path: str | Path = MODEL_PATH, conf: float = 0.5,
+                 save_frames: bool = True):
         self.model = YOLO(str(model_path))
         self.conf = conf
+        self.save_frames = save_frames
+        self._frame_counter = 0
+        # Preparar carpeta de debug frames
+        if self.save_frames:
+            DEBUG_FRAMES_DIR.mkdir(parents=True, exist_ok=True)
         # Anti-flicker: historial de diferencias por sku para validación de 3 frames
         self._diff_history: dict[str, list[int]] = defaultdict(list)
         # Cooldown por slot (timestamp del último evento emitido)
@@ -98,11 +179,39 @@ class DetectionEngine:
                 stock_level=stock_level,
             ))
 
-        return DetectionResult(
+        det_result = DetectionResult(
             timestamp=time.time(),
             counts=counts,
             detections=all_detections,
         )
+
+        # --- Guardar debug frame anotado ---
+        if self.save_frames:
+            self._save_debug_frame(frame, all_detections)
+
+        return det_result
+
+    def _save_debug_frame(self, frame: np.ndarray, detections: list[SlotDetection]):
+        """Guarda un frame anotado con bounding boxes en debug_frames/."""
+        self._frame_counter += 1
+        annotated = frame.copy()
+
+        for det in detections:
+            x1, y1, x2, y2 = det.bbox
+            color = _STOCK_COLORS.get(det.stock_level, (200, 200, 200))
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+            label = f"{det.sku_name} x{det.count} ({det.confidence:.2f})"
+            cv2.putText(annotated, label, (x1, max(y1 - 8, 15)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+
+        total = sum(1 for _ in detections)
+        info = f"Frame #{self._frame_counter} | conf={self.conf} | detecciones={total}"
+        cv2.putText(annotated, info, (10, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2, cv2.LINE_AA)
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = DEBUG_FRAMES_DIR / f"frame_{self._frame_counter:04d}_{ts}.jpg"
+        cv2.imwrite(str(path), annotated)
 
     def compare(
         self, prev: DetectionResult, curr: DetectionResult
@@ -196,45 +305,68 @@ class DetectionEngine:
         return sku_id
 
 
-# --- Test ---
+# --- Test en vivo con cámara ---
 if __name__ == "__main__":
-    # Buscar una imagen del dataset para prueba
-    images_dir = ROOT / "assets" / "project-7-at-2026-03-20-21-09-0e2e8304" / "images"
-    images = sorted(glob.glob(str(images_dir / "*.jpg")))
+    import argparse
+    from camera_capture import CameraCapture
 
-    if not images:
-        print("ERROR: No se encontraron imágenes en", images_dir)
+    parser = argparse.ArgumentParser(description="Test de detección en vivo")
+    parser.add_argument("--conf", type=float, default=0.5,
+                        help="Umbral de confianza (0.0-1.0)")
+    parser.add_argument("--frames", type=int, default=5,
+                        help="Cantidad de frames a capturar")
+    parser.add_argument("--source", default=None,
+                        help="Fuente de video (RTSP URL o int para USB)")
+    args = parser.parse_args()
+
+    print("=" * 60)
+    print("  DetectionEngine — Test en vivo con cámara")
+    print(f"  conf={args.conf}  frames={args.frames}")
+    print("=" * 60)
+
+    engine = DetectionEngine(conf=args.conf)
+
+    source = args.source
+    if source is not None:
+        try:
+            source = int(source)
+        except ValueError:
+            pass
+    cam = CameraCapture(source) if source is not None else CameraCapture()
+    if not cam.start():
+        print("ERROR: No se pudo conectar a la cámara")
         exit(1)
 
-    test_img_path = images[0]
-    print(f"Imagen de prueba: {test_img_path}")
+    prev_result = None
+    captured = 0
 
-    # Cargar modelo
-    engine = DetectionEngine()
+    try:
+        for fd in cam.get_frames():
+            captured += 1
+            result = engine.detect(fd.frame)
 
-    # Leer imagen
-    frame = cv2.imread(test_img_path)
-    if frame is None:
-        print(f"ERROR: No se pudo leer {test_img_path}")
-        exit(1)
+            total = sum(result.counts.values())
+            print(f"\n--- Frame {captured} ({fd.resolution[0]}x{fd.resolution[1]}) ---")
+            print(f"Total detecciones: {total}")
+            for sku_id, count in sorted(result.counts.items()):
+                if count > 0:
+                    print(f"  {sku_id}: {count}")
 
-    print(f"Frame shape: {frame.shape}")
+            if prev_result is not None:
+                events = engine.compare(prev_result, result)
+                if events:
+                    for ev in events:
+                        print(f"  ⚡ {ev.event_type.value}: {ev.sku_name} "
+                              f"({ev.count_before}→{ev.count_after})")
 
-    # Detectar
-    result = engine.detect(frame)
+            prev_result = result
 
-    print("\n=== Conteos detectados ===")
-    for sku_id, count in sorted(result.counts.items()):
-        print(f"  {sku_id}: {count}")
+            if captured >= args.frames:
+                break
+    finally:
+        cam.stop()
 
-    print(f"\nTotal detecciones: {len(result.detections)}")
-    for det in result.detections:
-        print(f"  {det.sku_name} (slot {det.slot_id}): conf={det.confidence:.2f}, "
-              f"bbox={det.bbox}, nivel={det.stock_level}")
-
-    # Simular compare con un segundo frame (misma imagen → sin cambios)
-    result2 = engine.detect(frame)
-    events = engine.compare(result, result2)
-    print(f"\nEventos generados (mismo frame): {len(events)} (esperado: 0)")
-
+    print(f"\n{'=' * 60}")
+    print(f"  {captured} frames capturados y guardados en debug_frames/")
+    print(f"{'=' * 60}")
     print("\n✅ DetectionEngine funcional.")

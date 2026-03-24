@@ -101,10 +101,10 @@ class PredictionEngine:
         return "estable"
 
     def _calcular_confianza(self, n_eventos: int) -> str:
-        """Determina confianza según cantidad de eventos."""
-        if n_eventos >= 6:
+        """Determina confianza según cantidad de eventos (MVP M6-RF05)."""
+        if n_eventos > 6:
             return "alta"
-        elif n_eventos > 3:
+        elif n_eventos >= 3:
             return "media"
         return "baja"
 

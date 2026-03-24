@@ -16,7 +16,7 @@ TEMPLATES = {
     "retiro": "📦 {sku_name} retirado del anaquel. Stock actual: {stock} unidades",
     "devolucion": "🔄 {sku_name} devuelto al anaquel. Stock ajustado: {before} → {after}",
     "alerta_umbral": "⚠️ ¡ALERTA! {sku_name} alcanzó el umbral crítico ({pct}%). Reponer urgente.",
-    "prediccion": "🔮 {sku_name} se agotará en ~{minutes} min al ritmo actual",
+    "prediccion": "🔮 {sku_name} se agotará en ~{minutes} min al ritmo actual ({trend})",
     "todo_ok": "✅ Todos los productos están por encima del umbral de seguridad",
     "resumen": "📊 Estado general: {n_alerta} producto(s) en alerta, {n_ok} OK. Último evento hace {ago}",
     "alta_demanda": "🔥 {sku_name} tiene alta demanda — {count} retiros en los últimos {window} min",

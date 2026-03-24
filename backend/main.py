@@ -1,29 +1,223 @@
 """
-Fase 3.2 — API REST FastAPI
-Expone el InventoryEngine vía endpoints HTTP.
+Fase 3.2 + 3.3 — API REST + WebSocket + Integración motores de inteligencia
+Expone el InventoryEngine vía endpoints HTTP y WebSocket (python-socketio).
+Integra PredictionEngine, NarrativeEngine y HeatmapEngine.
 """
 
+import asyncio
+import logging
+import random
 import time
 import uuid
 from dataclasses import asdict
 from datetime import datetime
 
+import socketio
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
-from contracts import DetectionEvent, EventType
+from contracts import (
+    DetectionEvent, EventType, InteractionEvent,
+    InventoryEvent, ProductStock,
+)
 from inventory_engine import InventoryEngine
+from prediction_engine import PredictionEngine
+from heatmap_engine import HeatmapEngine
+from narrative_engine import NarrativeEngine
+
+logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────
 #  Instancia global
 # ─────────────────────────────────────────
 
-app = FastAPI(title="P3 BackendCore", version="0.1.0")
+app = FastAPI(title="Anaquel Inteligente 3B", version="0.2.0")
 engine = InventoryEngine()
+prediction_engine = PredictionEngine(alpha=0.3)
+heatmap_engine = HeatmapEngine()
+narrative_engine = NarrativeEngine(cooldown_seconds=30.0)
 START_TIME = time.time()
+
+
+# ─────────────────────────────────────────
+#  Helper: programar broadcast async desde callback síncrono
+# ─────────────────────────────────────────
+
+def _schedule_broadcast(event_type: str, data: dict):
+    """Programa un broadcast WebSocket desde contexto síncrono."""
+    async def _emit():
+        await broadcast_event(event_type, data)
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_emit())
+    except RuntimeError:
+        if _loop:
+            asyncio.run_coroutine_threadsafe(_emit(), _loop)
+
+
+# ─────────────────────────────────────────
+#  Callbacks P4: conectar M6, M7, M8 al InventoryEngine
+# ─────────────────────────────────────────
+
+def _on_inventory_event(event: InventoryEvent, stock: ProductStock):
+    """Se ejecuta tras cada evento procesado por M3.
+    Actualiza predicciones, heatmap y genera narrativas + broadcast WS."""
+    # M7 — Registrar interacción en heatmap
+    heatmap_engine.record(InteractionEvent(
+        slot_id=event.slot_id,
+        sku_id=event.sku_id,
+        region=(0, 0, 0, 0),  # Sin coordenadas reales hasta integración con M2
+        timestamp=event.timestamp,
+        interaction_type="product_moved",
+    ))
+
+    # WS — Broadcast heatmap_update (contrato C8)
+    hm = heatmap_engine.get_heatmap()
+    _schedule_broadcast("heatmap_update", {"data": hm})
+
+    # M8 — Narrativa de retiro o devolución
+    narr = None
+    if event.event_type == "retiro":
+        narr = narrative_engine.generate(
+            "retiro",
+            sku_id=event.sku_id,
+            sku_name=event.sku_name,
+            stock=stock.stock_current,
+        )
+    elif event.event_type == "devolucion":
+        narr = narrative_engine.generate(
+            "devolucion",
+            sku_id=event.sku_id,
+            sku_name=event.sku_name,
+            before=event.stock_before,
+            after=event.stock_after,
+        )
+
+    # WS — Broadcast narrative (contrato C8)
+    if narr:
+        _schedule_broadcast("narrative", {"data": _to_json(narr)})
+
+    # M6 — Predicción + narrativa predictiva si hay datos suficientes
+    history = engine.get_history(event.sku_id)
+    if history and len(history.events) >= 2:
+        pred = prediction_engine.predict(history)
+
+        # WS — Broadcast prediction_update (contrato C8)
+        _schedule_broadcast("prediction_update", {"data": _to_json(pred)})
+
+        if pred.minutes_remaining is not None:
+            pred_narr = narrative_engine.generate(
+                "prediccion",
+                sku_id=event.sku_id,
+                sku_name=event.sku_name,
+                minutes=round(pred.minutes_remaining),
+                trend=pred.trend,
+            )
+            if pred_narr:
+                _schedule_broadcast("narrative", {"data": _to_json(pred_narr)})
+
+
+def _on_inventory_alert(event: InventoryEvent, stock: ProductStock):
+    """Se ejecuta cuando un SKU cruza el umbral de alerta."""
+    pct = round(stock.stock_current / stock.stock_initial * 100) if stock.stock_initial else 0
+    narr = narrative_engine.generate(
+        "alerta_umbral",
+        sku_id=event.sku_id,
+        sku_name=event.sku_name,
+        pct=pct,
+    )
+    # WS — Broadcast narrative de alerta (contrato C8)
+    if narr:
+        _schedule_broadcast("narrative", {"data": _to_json(narr)})
+
+
+engine.on_event(_on_inventory_event)
+engine.on_alert(_on_inventory_alert)
+
+# ─────────────────────────────────────────
+#  WebSocket — python-socketio
+# ─────────────────────────────────────────
+
+sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
+ws_logger = logging.getLogger("websocket")
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+@app.on_event("startup")
+async def _startup():
+    global _loop
+    _loop = asyncio.get_running_loop()
+    ws_logger.info("WebSocket server iniciado")
+
+
+def _to_json(obj):
+    """Convierte dataclass a dict JSON-safe (datetime -> ISO)."""
+    d = asdict(obj) if hasattr(obj, '__dataclass_fields__') else obj
+    def _fix(v):
+        if isinstance(v, datetime):
+            return v.isoformat()
+        if isinstance(v, dict):
+            return {k: _fix(val) for k, val in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [_fix(i) for i in v]
+        return v
+    return _fix(d)
+
+
+@sio.event
+async def connect(sid, environ):
+    ws_logger.info(f"Cliente conectado: {sid}")
+
+
+@sio.event
+async def disconnect(sid):
+    ws_logger.info(f"Cliente desconectado: {sid}")
+
+
+async def broadcast_event(event_type: str, data: dict):
+    """Emite un evento a todos los clientes WebSocket."""
+    await sio.emit(event_type, data)
+
+
+def _on_ws_event(event, stock):
+    """Callback sincrono: programa el broadcast en el event loop."""
+    event_data = _to_json(event)
+    stock_data = _to_json(stock)
+    payload = {"event": event_data, "stock": stock_data}
+
+    async def _emit():
+        await broadcast_event("inventory_update", payload)
+        await broadcast_event("detection_event", event_data)
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_emit())
+    except RuntimeError:
+        if _loop:
+            asyncio.run_coroutine_threadsafe(_emit(), _loop)
+
+
+def _on_ws_alert(event, stock):
+    """Callback sincrono: programa el broadcast de alerta en el event loop."""
+    payload = {"event": _to_json(event), "stock": _to_json(stock)}
+
+    async def _emit():
+        await broadcast_event("alert", payload)
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_emit())
+    except RuntimeError:
+        if _loop:
+            asyncio.run_coroutine_threadsafe(_emit(), _loop)
+
+
+engine.on_event(_on_ws_event)
+engine.on_alert(_on_ws_alert)
+
 
 # ─────────────────────────────────────────
 #  CORS (desarrollo — allow all)
@@ -61,8 +255,13 @@ def get_product(sku_id: str):
 
 
 @app.get("/api/events")
-def get_events(limit: int = Query(default=50, ge=1, le=500)):
+def get_events(
+    limit: int = Query(default=50, ge=1, le=500),
+    sku_id: str | None = Query(default=None),
+):
     events = engine.get_events(limit=limit)
+    if sku_id:
+        events = [e for e in events if e.sku_id == sku_id]
     return [asdict(e) for e in events]
 
 
@@ -99,23 +298,80 @@ def simulate_event(body: SimulateEventBody):
 
 @app.get("/api/predictions")
 def get_predictions():
-    return []
+    """Predicciones de agotamiento por SKU (M6)."""
+    histories = engine.get_all_histories()
+    predictions = prediction_engine.predict_all(histories)
+    result = []
+    for p in predictions:
+        d = asdict(p)
+        # Serializar datetime a ISO string
+        if d["estimated_depletion"]:
+            d["estimated_depletion"] = d["estimated_depletion"].isoformat()
+        result.append(d)
+    return result
 
 
 @app.get("/api/heatmap")
-def get_heatmap():
-    return {}
+def get_heatmap(window: int = Query(default=300, ge=10, le=3600)):
+    """Mapa de calor de actividad por slot (M7)."""
+    return heatmap_engine.get_heatmap(window_seconds=window)
 
 
 @app.get("/api/narratives")
-def get_narratives():
-    return []
+def get_narratives(limit: int = Query(default=10, ge=1, le=100)):
+    """Últimas narrativas generadas (M8)."""
+    messages = narrative_engine.get_recent(limit=limit)
+    result = []
+    for m in messages:
+        d = asdict(m)
+        d["timestamp"] = d["timestamp"].isoformat()
+        result.append(d)
+    return result
 
 
 @app.post("/api/inventory/reset")
 def reset_inventory():
     engine.reset()
+    heatmap_engine.reset()
+    narrative_engine.clear()
     return {"status": "ok", "message": "Inventario reseteado a stock inicial"}
+
+
+class ThresholdBody(BaseModel):
+    threshold: float = Field(ge=0.0, le=1.0)
+
+
+@app.put("/api/config/threshold")
+def update_threshold(body: ThresholdBody):
+    """Actualiza el umbral de alerta dinámicamente (contrato C8)."""
+    engine.set_threshold(body.threshold)
+    return {"status": "ok", "threshold": body.threshold}
+
+
+@app.post("/api/mock/event")
+async def mock_event():
+    """Simula un retiro aleatorio para probar WebSocket sin CV."""
+    state = engine.get_state()
+    sku_ids = [p.sku_id for p in state.products]
+    sku_id = random.choice(sku_ids)
+    product = engine.get_product(sku_id)
+
+    detection = DetectionEvent(
+        event_id=str(uuid.uuid4()),
+        event_type=EventType.RETIRO,
+        sku_id=sku_id,
+        sku_name=product.sku_name,
+        slot_id=product.slot_id,
+        confidence=0.95,
+        timestamp=datetime.now(),
+        bbox=(0, 0, 0, 0),
+        count_before=product.stock_current,
+        count_after=max(0, product.stock_current - 1),
+    )
+    inv_event = engine.process_event(detection)
+    if inv_event is None:
+        return {"status": "ignored", "message": "Evento ignorado (stock en 0 o duplicado)"}
+    return {"status": "ok", "event": asdict(inv_event)}
 
 
 @app.get("/api/analytics")
@@ -277,8 +533,14 @@ def dashboard():
 
 
 # ─────────────────────────────────────────
+#  ASGI combinada: FastAPI + socketio
+# ─────────────────────────────────────────
+
+combined_app = socketio.ASGIApp(sio, app)
+
+# ─────────────────────────────────────────
 #  Entrypoint
 # ─────────────────────────────────────────
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:combined_app", host="0.0.0.0", port=8000, reload=True)

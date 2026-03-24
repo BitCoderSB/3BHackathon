@@ -196,8 +196,9 @@ class InventoryEngine:
             elif detection.event_type == EventType.DEVOLUCION:
                 product.stock_current = min(self.stock_initial, product.stock_current + 1)
 
-            # Registrar timestamp (retiros y devoluciones)
-            self._event_timestamps[detection.sku_id].append(detection.timestamp)
+            # Registrar timestamp (solo retiros — contrato C6)
+            if detection.event_type == EventType.RETIRO:
+                self._event_timestamps[detection.sku_id].append(detection.timestamp)
 
             # Recalcular alerta
             alert_level = self.stock_initial * self.min_threshold
